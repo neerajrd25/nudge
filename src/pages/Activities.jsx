@@ -2,17 +2,19 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getStoredAuthData,
-  getAthleteActivities,
+  getAthleteActivitiesLast3Months,
   refreshAccessToken,
   storeAuthData,
   isTokenExpired,
 } from '../utils/stravaApi';
+import { storeActivitiesInFirebase } from '../utils/firebaseService';
 import './Activities.css';
 
 function Activities() {
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncStatus, setSyncStatus] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -37,11 +39,33 @@ function Activities() {
         accessToken = newAuthData.access_token;
       }
 
-      const data = await getAthleteActivities(accessToken, 1, 30);
+      // Fetch last 3 months of activities from Strava
+      setSyncStatus('Fetching activities from Strava...');
+      const data = await getAthleteActivitiesLast3Months(accessToken);
       setActivities(data);
+
+      // Store activities in Firebase if athlete data is available
+      if (authData.athlete && authData.athlete.id) {
+        setSyncStatus(`Storing ${data.length} activities in Firebase...`);
+        try {
+          const result = await storeActivitiesInFirebase(
+            String(authData.athlete.id),
+            data
+          );
+          setSyncStatus(`✓ ${result.message}`);
+          setTimeout(() => setSyncStatus(null), 3000);
+        } catch (firebaseError) {
+          console.error('Firebase storage error:', firebaseError);
+          setSyncStatus('⚠️ Activities loaded but Firebase sync failed. Check Firebase configuration.');
+          setTimeout(() => setSyncStatus(null), 5000);
+        }
+      } else {
+        setSyncStatus(null);
+      }
     } catch (err) {
       console.error('Error loading activities:', err);
       setError('Failed to load activities. Please try again.');
+      setSyncStatus(null);
     } finally {
       setLoading(false);
     }
@@ -95,6 +119,12 @@ function Activities() {
       </header>
 
       <main className="activities-main">
+        {syncStatus && (
+          <div className="sync-status">
+            <p>{syncStatus}</p>
+          </div>
+        )}
+
         {loading && (
           <div className="loading">
             <div className="spinner"></div>
