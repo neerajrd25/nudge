@@ -90,6 +90,24 @@ VITE_FIREBASE_APP_ID=your_app_id
 8. Choose "Start in test mode" for development (update security rules for production)
 9. Select a location for your database and click "Enable"
 
+**Recommended Firestore Security Rules for Development:**
+
+After enabling Firestore, update your security rules to restrict access:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow authenticated users to read/write their own athlete data
+    match /athletes/{athleteId}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+
+For production, implement more strict rules based on your authentication setup.
+
 ### 6. Run the development server
 
 ```bash
