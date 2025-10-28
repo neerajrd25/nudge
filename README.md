@@ -5,7 +5,8 @@ A React-based web application that integrates with Strava to help athletes plan 
 ## Features
 
 - 🔐 **Strava OAuth Integration** - Securely connect your Strava account
-- 📊 **Activity Tracking** - View all your Strava activities with detailed metrics
+- 📊 **Activity Tracking** - View your last 3 months of Strava activities with detailed metrics
+- 🔥 **Firebase Storage** - Automatically store activities in Firebase for persistent data
 - 📅 **Training Calendar** - Visualize your training schedule on an interactive calendar
 - 💬 **AI Chat** - Chat with AI about your training activities using Ollama models
 - 📱 **Responsive Design** - Works on desktop, tablet, and mobile devices
@@ -17,6 +18,7 @@ A React-based web application that integrates with Strava to help athletes plan 
 - A Strava account
 - Strava API credentials (Client ID and Client Secret)
 - (Optional) Ollama installed locally for AI chat features
+- A Firebase project (for storing activities)
 
 ## Getting Started
 
@@ -66,6 +68,27 @@ To use the AI Chat feature, install and run Ollama:
 3. Start the Ollama server: `ollama serve`
 
 The chat feature will work with any Ollama-compatible model.
+### 5. Set up Firebase (Required for storing activities)
+
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Create a new project or select an existing one
+3. Navigate to Project Settings (gear icon) > General
+4. Under "Your apps", click the web icon (`</>`) to add a web app
+5. Register your app and copy the Firebase configuration
+6. Add your Firebase credentials to the `.env` file:
+
+```env
+VITE_FIREBASE_API_KEY=your_firebase_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project_id.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+```
+
+7. In Firebase Console, go to Firestore Database and click "Create database"
+8. Choose "Start in test mode" for development (update security rules for production)
+9. Select a location for your database and click "Enable"
 
 ### 6. Run the development server
 
@@ -82,6 +105,9 @@ The app will be available at `http://localhost:5173`
 3. **View Activities**: Navigate to the Activities page to see your recent workouts
 4. **Training Calendar**: Check out the Calendar page to visualize your training schedule
 5. **AI Chat**: Use the Chat page to discuss your training with AI (requires Ollama)
+3. **View Activities**: Navigate to the Activities page to see your recent workouts from the last 3 months
+4. **Automatic Firebase Sync**: Activities are automatically stored in Firebase for persistence
+5. **Training Calendar**: Check out the Calendar page to visualize your training schedule
 
 ## Available Scripts
 
@@ -99,6 +125,7 @@ The app will be available at `http://localhost:5173`
 - **React Calendar** - Calendar component
 - **Strava API** - Athlete data and activities
 - **Ollama** - Local AI models for chat functionality
+- **Firebase/Firestore** - Cloud database for storing activities
 
 ## Project Structure
 
@@ -115,6 +142,8 @@ nudge/
 │   ├── utils/          # Utility functions
 │   │   ├── stravaApi.js
 │   │   └── ollamaApi.js
+│   │   ├── firebaseConfig.js
+│   │   └── firebaseService.js
 │   ├── App.jsx         # Main app component
 │   └── main.jsx        # Entry point
 ├── public/             # Static assets
@@ -124,9 +153,10 @@ nudge/
 
 ## Security Notes
 
-- Never commit your `.env` file or expose your Strava API credentials
+- Never commit your `.env` file or expose your Strava API credentials or Firebase configuration
 - The app stores access tokens in localStorage for convenience in local development
 - For production use, implement more secure token storage (e.g., httpOnly cookies)
+- Update Firebase security rules for production use - the default test mode rules allow unrestricted access
 
 ## Contributing
 
