@@ -41,6 +41,17 @@
   padding: 2rem 1rem;
 }
 
+.sync-status {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  text-align: center;
+  color: #333;
+  margin-bottom: 1.5rem;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .loading {
   text-align: center;
   color: white;

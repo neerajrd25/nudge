@@ -75,6 +75,55 @@ export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) 
   }
 };
 
+// Get athlete activities for the last 3 months
+export const getAthleteActivitiesLast3Months = async (accessToken) => {
+  try {
+    // Calculate the timestamp for 3 months ago
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const afterTimestamp = Math.floor(threeMonthsAgo.getTime() / 1000);
+
+    // Fetch activities with pagination
+    let allActivities = [];
+    let page = 1;
+    const perPage = 100; // Max allowed by Strava API
+    let hasMoreData = true;
+
+    while (hasMoreData) {
+      const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        params: {
+          after: afterTimestamp,
+          page,
+          per_page: perPage,
+        },
+      });
+
+      const activities = response.data;
+      
+      if (activities.length === 0) {
+        hasMoreData = false;
+      } else {
+        allActivities = allActivities.concat(activities);
+        
+        // If we got less than perPage results, we've reached the end
+        if (activities.length < perPage) {
+          hasMoreData = false;
+        } else {
+          page++;
+        }
+      }
+    }
+
+    return allActivities;
+  } catch (error) {
+    console.error('Error fetching last 3 months activities:', error);
+    throw error;
+  }
+};
+
 // Get athlete profile
 export const getAthlete = async (accessToken) => {
   try {
