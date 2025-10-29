@@ -1,6 +1,6 @@
 .training-calendar {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #fc4c02 0%, #e8591c 100%);
 }
 
 .calendar-header {
@@ -48,21 +48,21 @@
 }
 
 .custom-calendar .react-calendar__tile.has-activities {
-  background: rgba(102, 126, 234, 0.1);
+  background: rgba(252, 76, 2, 0.1);
   font-weight: 600;
 }
 
 .custom-calendar .react-calendar__tile--active {
-  background: #667eea !important;
+  background: #fc4c02 !important;
   color: white;
 }
 
 .custom-calendar .react-calendar__tile--active.has-activities {
-  background: #667eea !important;
+  background: #fc4c02 !important;
 }
 
 .custom-calendar .react-calendar__tile:hover {
-  background: rgba(102, 126, 234, 0.2);
+  background: rgba(252, 76, 2, 0.2);
 }
 
 .calendar-tile-content {
@@ -71,7 +71,7 @@
 }
 
 .activity-indicator {
-  background: #667eea;
+  background: #fc4c02;
   color: white;
   padding: 0.15rem 0.3rem;
   border-radius: 4px;
@@ -100,7 +100,7 @@
 }
 
 .legend-dot.has-activity {
-  background: rgba(102, 126, 234, 0.3);
+  background: rgba(252, 76, 2, 0.3);
 }
 
 .selected-date-section {
@@ -146,7 +146,7 @@
   background: #f8f9fa;
   padding: 1.25rem;
   border-radius: 12px;
-  border-left: 4px solid #667eea;
+  border-left: 4px solid #fc4c02;
 }
 
 .activity-item-header {
@@ -171,7 +171,7 @@
 }
 
 .day-summary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #fc4c02 0%, #e8591c 100%);
   color: white;
   padding: 1.5rem;
   border-radius: 12px;
