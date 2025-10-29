@@ -8,7 +8,7 @@ import {
   orderBy,
   Timestamp 
 } from 'firebase/firestore';
-import { db } from './firebaseConfig';
+import { db, ensureAuthenticated } from './firebaseConfig';
 
 /**
  * Store Strava activities in Firebase
@@ -22,6 +22,9 @@ export const storeActivitiesInFirebase = async (athleteId, activities) => {
   }
 
   try {
+    // Ensure user is authenticated before performing database operations
+    await ensureAuthenticated();
+    
     let storedCount = 0;
     
     // Store each activity in Firebase
@@ -85,6 +88,9 @@ export const getActivitiesFromFirebase = async (athleteId, limit = 100) => {
   }
 
   try {
+    // Ensure user is authenticated before performing database operations
+    await ensureAuthenticated();
+    
     const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
     const q = query(
       activitiesRef,
@@ -118,6 +124,9 @@ export const getActivitiesByDateRange = async (athleteId, startDate, endDate) =>
   }
 
   try {
+    // Ensure user is authenticated before performing database operations
+    await ensureAuthenticated();
+    
     const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
     const q = query(
       activitiesRef,
