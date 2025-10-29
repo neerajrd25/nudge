@@ -1,6 +1,6 @@
 .activities {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #fc4c02 0%, #e8591c 100%);
 }
 
 .activities-header {
@@ -83,7 +83,7 @@
 
 .error-message button {
   margin-top: 1rem;
-  background: #667eea;
+  background: #fc4c02;
   color: white;
   border: none;
   padding: 0.6rem 1.5rem;
