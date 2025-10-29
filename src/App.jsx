@@ -3,6 +3,7 @@ import Home from './pages/Home';
 import Callback from './pages/Callback';
 import Activities from './pages/Activities';
 import TrainingCalendar from './pages/TrainingCalendar';
+import Chat from './pages/Chat';
 import './App.css';
 
 function App() {
@@ -13,6 +14,7 @@ function App() {
         <Route path="/callback" element={<Callback />} />
         <Route path="/activities" element={<Activities />} />
         <Route path="/calendar" element={<TrainingCalendar />} />
+        <Route path="/chat" element={<Chat />} />
       </Routes>
     </Router>
   );

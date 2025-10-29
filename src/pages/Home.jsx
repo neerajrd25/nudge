@@ -53,9 +53,9 @@ function Home() {
                 <p>Visualize your training schedule on a calendar</p>
               </div>
               <div className="feature">
-                <span className="feature-icon">🤖</span>
-                <h3>AI Insights</h3>
-                <p>Get personalized training recommendations</p>
+                <span className="feature-icon">💬</span>
+                <h3>AI Chat</h3>
+                <p>Chat with AI about your training activities</p>
               </div>
             </div>
             <button className="strava-login-btn" onClick={handleLogin}>
@@ -90,6 +90,11 @@ function Home() {
                 <span className="nav-icon">📅</span>
                 <h3>Training Calendar</h3>
                 <p>Plan and track your training schedule</p>
+              </div>
+              <div className="nav-card" onClick={() => navigate('/chat')}>
+                <span className="nav-icon">💬</span>
+                <h3>AI Training Chat</h3>
+                <p>Chat with AI about your training</p>
               </div>
             </div>
           </div>
