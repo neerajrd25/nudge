@@ -7,7 +7,7 @@ A React-based web application that integrates with Strava to help athletes plan 
 - 🔐 **Strava OAuth Integration** - Securely connect your Strava account
 - 📊 **Activity Tracking** - View all your Strava activities with detailed metrics
 - 📅 **Training Calendar** - Visualize your training schedule on an interactive calendar
-- 🤖 **AI Insights** - Get personalized training recommendations (coming soon)
+- 💬 **AI Chat** - Chat with AI about your training activities using Ollama models
 - 📱 **Responsive Design** - Works on desktop, tablet, and mobile devices
 
 ## Prerequisites
@@ -16,6 +16,7 @@ A React-based web application that integrates with Strava to help athletes plan 
 - npm or yarn
 - A Strava account
 - Strava API credentials (Client ID and Client Secret)
+- (Optional) Ollama installed locally for AI chat features
 
 ## Getting Started
 
@@ -53,9 +54,20 @@ Edit the `.env` file and add your Strava credentials:
 VITE_STRAVA_CLIENT_ID=your_client_id_here
 VITE_STRAVA_CLIENT_SECRET=your_client_secret_here
 VITE_STRAVA_REDIRECT_URI=http://localhost:5173/callback
+VITE_OLLAMA_API_URL=http://localhost:11434
 ```
 
-### 5. Run the development server
+### 5. (Optional) Set up Ollama for AI Chat
+
+To use the AI Chat feature, install and run Ollama:
+
+1. Download and install Ollama from [ollama.ai](https://ollama.ai)
+2. Pull a model (e.g., `ollama pull llama2` or `ollama pull mistral`)
+3. Start the Ollama server: `ollama serve`
+
+The chat feature will work with any Ollama-compatible model.
+
+### 6. Run the development server
 
 ```bash
 npm run dev
@@ -69,6 +81,7 @@ The app will be available at `http://localhost:5173`
 2. **Authorize**: Allow Nudge to access your Strava data
 3. **View Activities**: Navigate to the Activities page to see your recent workouts
 4. **Training Calendar**: Check out the Calendar page to visualize your training schedule
+5. **AI Chat**: Use the Chat page to discuss your training with AI (requires Ollama)
 
 ## Available Scripts
 
@@ -85,6 +98,7 @@ The app will be available at `http://localhost:5173`
 - **Axios** - HTTP client for API requests
 - **React Calendar** - Calendar component
 - **Strava API** - Athlete data and activities
+- **Ollama** - Local AI models for chat functionality
 
 ## Project Structure
 
@@ -96,9 +110,11 @@ nudge/
 │   │   ├── Home.jsx
 │   │   ├── Callback.jsx
 │   │   ├── Activities.jsx
-│   │   └── TrainingCalendar.jsx
+│   │   ├── TrainingCalendar.jsx
+│   │   └── Chat.jsx
 │   ├── utils/          # Utility functions
-│   │   └── stravaApi.js
+│   │   ├── stravaApi.js
+│   │   └── ollamaApi.js
 │   ├── App.jsx         # Main app component
 │   └── main.jsx        # Entry point
 ├── public/             # Static assets
