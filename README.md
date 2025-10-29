@@ -8,7 +8,7 @@ A React-based web application that integrates with Strava to help athletes plan 
 - 📊 **Activity Tracking** - View your last 3 months of Strava activities with detailed metrics
 - 🔥 **Firebase Storage** - Automatically store activities in Firebase for persistent data
 - 📅 **Training Calendar** - Visualize your training schedule on an interactive calendar
-- 🤖 **AI Insights** - Get personalized training recommendations (coming soon)
+- 💬 **AI Chat** - Chat with AI about your training activities using Ollama models
 - 📱 **Responsive Design** - Works on desktop, tablet, and mobile devices
 
 ## Prerequisites
@@ -17,6 +17,7 @@ A React-based web application that integrates with Strava to help athletes plan 
 - npm or yarn
 - A Strava account
 - Strava API credentials (Client ID and Client Secret)
+- (Optional) Ollama installed locally for AI chat features
 - A Firebase project (for storing activities)
 
 ## Getting Started
@@ -55,8 +56,18 @@ Edit the `.env` file and add your Strava credentials:
 VITE_STRAVA_CLIENT_ID=your_client_id_here
 VITE_STRAVA_CLIENT_SECRET=your_client_secret_here
 VITE_STRAVA_REDIRECT_URI=http://localhost:5173/callback
+VITE_OLLAMA_API_URL=http://localhost:11434
 ```
 
+### 5. (Optional) Set up Ollama for AI Chat
+
+To use the AI Chat feature, install and run Ollama:
+
+1. Download and install Ollama from [ollama.ai](https://ollama.ai)
+2. Pull a model (e.g., `ollama pull llama2` or `ollama pull mistral`)
+3. Start the Ollama server: `ollama serve`
+
+The chat feature will work with any Ollama-compatible model.
 ### 5. Set up Firebase (Required for storing activities)
 
 1. Go to [Firebase Console](https://console.firebase.google.com/)
@@ -109,6 +120,9 @@ The app will be available at `http://localhost:5173`
 
 1. **Connect to Strava**: Click the "Connect with Strava" button on the home page
 2. **Authorize**: Allow Nudge to access your Strava data
+3. **View Activities**: Navigate to the Activities page to see your recent workouts
+4. **Training Calendar**: Check out the Calendar page to visualize your training schedule
+5. **AI Chat**: Use the Chat page to discuss your training with AI (requires Ollama)
 3. **View Activities**: Navigate to the Activities page to see your recent workouts from the last 3 months
 4. **Automatic Firebase Sync**: Activities are automatically stored in Firebase for persistence
 5. **Training Calendar**: Check out the Calendar page to visualize your training schedule
@@ -128,6 +142,7 @@ The app will be available at `http://localhost:5173`
 - **Axios** - HTTP client for API requests
 - **React Calendar** - Calendar component
 - **Strava API** - Athlete data and activities
+- **Ollama** - Local AI models for chat functionality
 - **Firebase/Firestore** - Cloud database for storing activities
 
 ## Project Structure
@@ -140,9 +155,11 @@ nudge/
 │   │   ├── Home.jsx
 │   │   ├── Callback.jsx
 │   │   ├── Activities.jsx
-│   │   └── TrainingCalendar.jsx
+│   │   ├── TrainingCalendar.jsx
+│   │   └── Chat.jsx
 │   ├── utils/          # Utility functions
 │   │   ├── stravaApi.js
+│   │   └── ollamaApi.js
 │   │   ├── firebaseConfig.js
 │   │   └── firebaseService.js
 │   ├── App.jsx         # Main app component
