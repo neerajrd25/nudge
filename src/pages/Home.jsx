@@ -48,6 +48,11 @@ function Home() {
                 <p>View all your Strava activities in one place</p>
               </div>
               <div className="feature">
+                <span className="feature-icon">🏆</span>
+                <h3>Personal Records</h3>
+                <p>Track your running and cycling PRs from Strava</p>
+              </div>
+              <div className="feature">
                 <span className="feature-icon">📅</span>
                 <h3>Training Calendar</h3>
                 <p>Visualize your training schedule on a calendar</p>
@@ -85,6 +90,11 @@ function Home() {
                 <span className="nav-icon">📊</span>
                 <h3>Activities</h3>
                 <p>View your recent training activities</p>
+              </div>
+              <div className="nav-card" onClick={() => navigate('/prs')}>
+                <span className="nav-icon">🏆</span>
+                <h3>Personal Records</h3>
+                <p>View your running and cycling PRs</p>
               </div>
               <div className="nav-card" onClick={() => navigate('/calendar')}>
                 <span className="nav-icon">📅</span>

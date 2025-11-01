@@ -154,6 +154,21 @@ export const getAthleteStats = async (accessToken, athleteId) => {
   }
 };
 
+// Get detailed activity (includes best efforts)
+export const getActivityById = async (accessToken, activityId) => {
+  try {
+    const response = await axios.get(`${STRAVA_API_BASE}/activities/${activityId}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching activity details:', error);
+    throw error;
+  }
+};
+
 // Storage helpers
 export const storeAuthData = (data) => {
   localStorage.setItem('strava_access_token', data.access_token);

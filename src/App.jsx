@@ -4,6 +4,7 @@ import Callback from './pages/Callback';
 import Activities from './pages/Activities';
 import TrainingCalendar from './pages/TrainingCalendar';
 import Chat from './pages/Chat';
+import PersonalRecords from './pages/PersonalRecords';
 import './App.css';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
         <Route path="/activities" element={<Activities />} />
         <Route path="/calendar" element={<TrainingCalendar />} />
         <Route path="/chat" element={<Chat />} />
+        <Route path="/prs" element={<PersonalRecords />} />
       </Routes>
     </Router>
   );
