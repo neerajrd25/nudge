@@ -73,7 +73,7 @@ function Activities() {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    
+
     const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
     const prevMonth = prevMonthDate.getMonth();
     const prevMonthYear = prevMonthDate.getFullYear();
@@ -107,7 +107,7 @@ function Activities() {
     const sign = diff >= 0 ? '+' : '-';
     const absDiff = Math.abs(diff);
     let displayDiff = absDiff;
-    
+
     if (isDistance) {
       displayDiff = (absDiff / 1000).toFixed(1);
     } else if (typeof absDiff === 'number' && !Number.isInteger(absDiff)) {
@@ -157,7 +157,7 @@ function Activities() {
       if (isManual) setLoading(true);
       setSyncing(true);
       setProgressPercent(10);
-      
+
       const perPage = 200;
       let page = 1;
       let anyStored = 0;
@@ -179,7 +179,7 @@ function Activities() {
 
         const res = await storeActivitiesInFirebase(athleteId, pageActivities, userSettings);
         anyStored += (res && res.count) ? res.count : pageActivities.length;
-        
+
         // Match with planned workouts
         const matches = await autoMatchActivities(athleteId, pageActivities);
         if (matches.matched && matches.matched.length > 0) allMatched.push(...matches.matched);
@@ -214,7 +214,7 @@ function Activities() {
         let statusMsg = anyStored > 0 ? `✓ Synced ${anyStored} new activities.` : 'Already up to date.';
         if (allMatched.length > 0) statusMsg += ` ${allMatched.length} matched to plan.`;
         setSyncStatus(statusMsg);
-        
+
         // Reload from Firebase (The Source of Truth)
         let refreshed = await getActivitiesFromFirebase(athleteId, 500, null, filterType);
         if (filterType === '') {
@@ -255,6 +255,31 @@ function Activities() {
       if (docs && docs.length > 0) {
         setLastStartDateCursor(docs[docs.length - 1].start_date || docs[docs.length - 1].start_date_local || null);
       }
+
+      // Check if we need to auto-sync (background sync if data is old)
+      try {
+        setSyncStatus('Checking for data updates...');
+        const syncResult = await autoSync(authData, 24, (progressMessage) => {
+          setSyncStatus(progressMessage);
+        });
+
+        if (syncResult) {
+          // Data was synced, reload activities
+          setSyncStatus('Refreshing activities...');
+          const updatedActivities = await getActivitiesFromFirebase(String(athleteId));
+          setActivities(updatedActivities);
+          setLastSyncTime(syncResult.lastSyncTime);
+          setSyncStatus('✓ Data updated successfully');
+        } else {
+          setSyncStatus('✓ Activities are up to date');
+        }
+      } catch (syncError) {
+        console.warn('Auto-sync failed, but using cached data:', syncError);
+        setSyncStatus(firebaseActivities.length > 0 ? '✓ Loaded cached activities' : '⚠️ Using cached data (sync failed)');
+      }
+
+      setTimeout(() => setSyncStatus(null), 3000);
+
     } catch (err) {
       setError('Load failed.');
     } finally {
@@ -320,16 +345,65 @@ function Activities() {
     return () => window.removeEventListener('scroll', onScroll);
   }, [isLoadingMore, syncing, loading, hasMore, lastStartDateCursor, filterType]);
 
+  const refreshData = async () => {
+    setLoading(true);
+    setSyncStatus('Refreshing data from Strava...');
+
+    try {
+      const authData = getStoredAuthData();
+      if (!authData || !authData.accessToken) {
+        navigate('/');
+        return;
+      }
+
+      const syncResult = await autoSync(authData, 0, (progressMessage) => {
+        setSyncStatus(progressMessage);
+      });
+
+      if (syncResult) {
+        const athleteId = authData.athlete?.id;
+        const updatedActivities = await getActivitiesFromFirebase(String(athleteId));
+        setActivities(updatedActivities);
+        setLastSyncTime(syncResult.lastSyncTime);
+        setSyncStatus('✓ Data refreshed successfully');
+      }
+
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (error) {
+      console.error('Refresh failed:', error);
+      setSyncStatus('⚠️ Refresh failed. Using cached data.');
+      setTimeout(() => setSyncStatus(null), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatLastSyncTime = (timeString) => {
+    if (!timeString) return 'Never';
+
+    const syncTime = new Date(timeString);
+    const now = new Date();
+    const diffMs = now - syncTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  };
+
   const getActivityIcon = (type) => {
     const typeLower = type.toLowerCase();
-    
+
     if (typeLower.includes('run')) return <IconRun size={24} />;
     if (typeLower.includes('ride') || typeLower.includes('bike') || typeLower.includes('cycle')) return <IconBike size={24} />;
     if (typeLower.includes('swim')) return <IconSwimming size={24} />;
     if (typeLower.includes('walk')) return <IconWalk size={24} />;
     if (typeLower.includes('hike') || typeLower.includes('mountain')) return <IconMountain size={24} />;
     if (typeLower.includes('workout') || typeLower.includes('weight') || typeLower.includes('strength')) return <IconBarbell size={24} />;
-    
+
     return <IconRun size={24} />;
   };
 
@@ -346,11 +420,11 @@ function Activities() {
       <Group justify="space-between" align="center">
         <Title order={1}>Activities</Title>
         <Group>
-          <Button 
-            onClick={() => syncWithStrava(true)} 
-            variant="light" 
-            size="sm" 
-            leftSection={<IconRefresh size={16} />} 
+          <Button
+            onClick={() => syncWithStrava(true)}
+            variant="light"
+            size="sm"
+            leftSection={<IconRefresh size={16} />}
             loading={loading}
           >
             Sync with Strava
@@ -467,10 +541,10 @@ function Activities() {
                   >
                     <Grid columns={12} gutter="md" align="center">
                       <Grid.Col span={{ base: 12, sm: 1 }}>
-                        <Box 
-                          p="sm" 
-                          bg="rgba(33, 150, 243, 0.1)" 
-                          style={{ borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
+                        <Box
+                          p="sm"
+                          bg="rgba(33, 150, 243, 0.1)"
+                          style={{ borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                           c="blue.4"
                         >
                           {getActivityIcon(activity.type)}
@@ -566,9 +640,9 @@ function Activities() {
                   <Text size="xs">{workout.plannedDuration} min • {workout.date}</Text>
                   {workout.plannedDistance && <Text size="xs" c="dimmed">{workout.plannedDistance} km</Text>}
                 </Box>
-                
+
                 <Divider label="Potential Matches" labelPosition="center" />
-                
+
                 {activities.map((activity, idx) => (
                   <Group key={activity.id} justify="space-between" align="flex-start" p="xs" style={{ borderRadius: '4px', background: 'rgba(255,255,255,0.03)' }}>
                     <Box>

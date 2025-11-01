@@ -7,6 +7,7 @@ import { exchangeToken, storeAuthData } from '../utils/stravaApi';
 function Callback() {
   const [searchParams] = useSearchParams();
   const [status, setStatus] = useState('processing');
+  const [progress, setProgress] = useState('Connecting to Strava...');
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
@@ -28,6 +29,7 @@ function Callback() {
     const handleCallback = async () => {
       hasProcessed.current = true;
       try {
+        setProgress('Exchanging authorization code...');
         const data = await exchangeToken(code);
         storeAuthData(data);
         // notify app that auth changed so layouts/pages can refresh state
