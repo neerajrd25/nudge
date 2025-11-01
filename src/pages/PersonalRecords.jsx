@@ -150,8 +150,6 @@ function PersonalRecords() {
     return `${km} km`;
   };
 
-
-
   const renderRunningPRs = () => {
     if (!stats || !stats.all_run_totals) {
       return <p className="no-data">No running data available</p>;
