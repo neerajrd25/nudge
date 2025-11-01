@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStoredAuthData, clearAuthData, getAuthorizationUrl } from '../utils/stravaApi';
+import { syncAllDataToFirebase } from '../utils/dataSyncService';
 import './Home.css';
 
 function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [athlete, setAthlete] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -78,6 +81,51 @@ function Home() {
               <button className="logout-btn" onClick={handleLogout}>
                 Logout
               </button>
+              <div style={{ marginTop: '0.5rem' }}>
+                <button
+                  className="sync-all-btn"
+                  onClick={async () => {
+                    if (syncing) return;
+                    // Ask user for start date
+                    const input = window.prompt('Enter start date (YYYY-MM-DD) from which to pull activities (this will be Day 1). Leave empty to use last 3 months:');
+                    let startDate = null;
+                    if (input && input.trim() !== '') {
+                      const parsed = new Date(input.trim());
+                      if (isNaN(parsed.getTime())) {
+                        window.alert('Invalid date format. Please use YYYY-MM-DD');
+                        return;
+                      }
+                      startDate = parsed.toISOString();
+                    }
+
+                    try {
+                      setSyncing(true);
+                      setSyncProgress('Starting full sync...');
+                      const authData = getStoredAuthData();
+                      if (!authData) {
+                        window.alert('No authentication data found. Please log in first.');
+                        setSyncing(false);
+                        setSyncProgress(null);
+                        return;
+                      }
+
+                      const result = await syncAllDataToFirebase(authData, (msg) => setSyncProgress(msg), startDate);
+                      console.log('Full sync result:', result);
+                      window.alert(result.success ? 'Sync completed successfully' : 'Sync completed with errors; check console');
+                    } catch (err) {
+                      console.error('Sync failed:', err);
+                      window.alert('Sync failed. Check console for details.');
+                    } finally {
+                      setSyncing(false);
+                      setSyncProgress(null);
+                    }
+                  }}
+                  disabled={syncing}
+                >
+                  {syncing ? 'Syncing...' : 'Sync All'}
+                </button>
+                {syncProgress && <div style={{ color: '#fff', marginTop: '6px' }}>{syncProgress}</div>}
+              </div>
             </div>
 
             <div className="navigation-cards">
@@ -95,6 +143,11 @@ function Home() {
                 <span className="nav-icon">💬</span>
                 <h3>AI Training Chat</h3>
                 <p>Chat with AI about your training</p>
+              </div>
+              <div className="nav-card" onClick={() => navigate('/pr')}>
+                <span className="nav-icon">🏆</span>
+                <h3>Personal Records</h3>
+                <p>View sport-wise PRs computed from your activities</p>
               </div>
             </div>
           </div>

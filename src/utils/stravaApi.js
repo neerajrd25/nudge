@@ -77,49 +77,119 @@ export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) 
 
 // Get athlete activities for the last 3 months
 export const getAthleteActivitiesLast3Months = async (accessToken) => {
+  // Convenience wrapper that delegates to getAthleteActivitiesSince
   try {
-    // Calculate the timestamp for 3 months ago
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
     const afterTimestamp = Math.floor(threeMonthsAgo.getTime() / 1000);
+    return await getAthleteActivitiesSince(accessToken, afterTimestamp);
+  } catch (error) {
+    console.error('Error fetching last 3 months activities:', error);
+    throw error;
+  }
+};
 
-    // Fetch activities with pagination
+// Helper sleep
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+/**
+ * Fetch athlete activities since a given unix timestamp (seconds).
+ * Handles pagination and basic rate limit (429) backoff / Retry-After header.
+ */
+export const getAthleteActivitiesSince = async (
+  accessToken,
+  afterTimestamp,
+  perPage = 100
+) => {
+  try {
     let allActivities = [];
     let page = 1;
-    const perPage = 100; // Max allowed by Strava API
     let hasMoreData = true;
 
-    while (hasMoreData) {
-      const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        params: {
-          after: afterTimestamp,
-          page,
-          per_page: perPage,
-        },
-      });
+    // We'll do retries with exponential backoff for transient 429/5xx errors
+    const maxRetries = 5;
 
-      const activities = response.data;
-      
-      if (activities.length === 0) {
+    while (hasMoreData) {
+      let attempt = 0;
+      let response = null;
+
+      while (attempt <= maxRetries) {
+        try {
+          response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+            params: {
+              after: afterTimestamp,
+              page,
+              per_page: perPage,
+            },
+            validateStatus: (status) => true, // we'll handle statuses manually
+          });
+
+          // Handle rate limit
+          if (response.status === 429) {
+            const retryAfter = parseInt(response.headers['retry-after']) || null;
+            const backoffMs = retryAfter ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
+            console.warn(`Strava rate limit hit (429). Backing off for ${backoffMs}ms (attempt ${attempt + 1})`);
+            await sleep(backoffMs);
+            attempt++;
+            continue;
+          }
+
+          // Handle server errors with backoff
+          if (response.status >= 500 && response.status < 600) {
+            const backoffMs = Math.pow(2, attempt) * 1000;
+            console.warn(`Strava server error ${response.status}. Backing off ${backoffMs}ms (attempt ${attempt + 1})`);
+            await sleep(backoffMs);
+            attempt++;
+            continue;
+          }
+
+          // For 401/403 treat as auth error
+          if (response.status === 401 || response.status === 403) {
+            const err = new Error(`Authentication error when calling Strava API: ${response.status}`);
+            err.response = response;
+            throw err;
+          }
+
+          // If we reach here and response is OK (200)
+          if (response.status === 200) break;
+
+          // For other 4xx errors, throw
+          const err = new Error(`Unexpected response from Strava API: ${response.status}`);
+          err.response = response;
+          throw err;
+        } catch (err) {
+          if (attempt >= maxRetries) throw err;
+          const backoffMs = Math.pow(2, attempt) * 1000;
+          console.warn(`Error fetching activities (attempt ${attempt + 1}): ${err.message}. Backing off ${backoffMs}ms`);
+          await sleep(backoffMs);
+          attempt++;
+        }
+      }
+
+      if (!response) break; // safety
+
+      const activities = response.data || [];
+
+      if (!Array.isArray(activities) || activities.length === 0) {
         hasMoreData = false;
       } else {
         allActivities = allActivities.concat(activities);
-        
-        // If we got less than perPage results, we've reached the end
         if (activities.length < perPage) {
           hasMoreData = false;
         } else {
           page++;
+          // Gentle delay between pages to reduce chance of rate limiting
+          await sleep(250);
         }
       }
     }
 
     return allActivities;
   } catch (error) {
-    console.error('Error fetching last 3 months activities:', error);
+    console.error('Error fetching activities since timestamp:', error);
     throw error;
   }
 };

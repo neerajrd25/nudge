@@ -2,13 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
-import {
-  getStoredAuthData,
-  getAthleteActivities,
-  refreshAccessToken,
-  storeAuthData,
-  isTokenExpired,
-} from '../utils/stravaApi';
+import { getStoredAuthData } from '../utils/stravaApi';
+import { getActivitiesFromFirebase } from '../utils/firebaseService';
 import './TrainingCalendar.css';
 
 function TrainingCalendar() {
@@ -45,16 +40,14 @@ function TrainingCalendar() {
         return;
       }
 
-      let accessToken = authData.accessToken;
-
-      // Refresh token if expired
-      if (isTokenExpired() && authData.refreshToken) {
-        const newAuthData = await refreshAccessToken(authData.refreshToken);
-        storeAuthData(newAuthData);
-        accessToken = newAuthData.access_token;
+      const athleteId = authData.athlete?.id;
+      if (!athleteId) {
+        setError('No athlete data found. Please log in again.');
+        return;
       }
 
-      const data = await getAthleteActivities(accessToken, 1, 100);
+      // Load activities from Firebase
+      const data = await getActivitiesFromFirebase(String(athleteId), 200); // Get more for calendar view
       setActivities(data);
     } catch (err) {
       console.error('Error loading activities:', err);

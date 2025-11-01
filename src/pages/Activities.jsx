@@ -1,13 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  getStoredAuthData,
-  getAthleteActivitiesLast3Months,
-  refreshAccessToken,
-  storeAuthData,
-  isTokenExpired,
-} from '../utils/stravaApi';
-import { storeActivitiesInFirebase } from '../utils/firebaseService';
+import { getStoredAuthData } from '../utils/stravaApi';
+import { getActivitiesFromFirebase, getSyncStatus } from '../utils/firebaseService';
+import { autoSync } from '../utils/dataSyncService';
 import './Activities.css';
 
 function Activities() {
@@ -15,6 +10,7 @@ function Activities() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncStatus, setSyncStatus] = useState(null);
+  const [lastSyncTime, setLastSyncTime] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,38 +26,51 @@ function Activities() {
         return;
       }
 
-      let accessToken = authData.accessToken;
-
-      // Refresh token if expired
-      if (isTokenExpired() && authData.refreshToken) {
-        const newAuthData = await refreshAccessToken(authData.refreshToken);
-        storeAuthData(newAuthData);
-        accessToken = newAuthData.access_token;
+      const athleteId = authData.athlete?.id;
+      if (!athleteId) {
+        setError('No athlete data found. Please log in again.');
+        return;
       }
 
-      // Fetch last 3 months of activities from Strava
-      setSyncStatus('Fetching activities from Strava...');
-      const data = await getAthleteActivitiesLast3Months(accessToken);
-      setActivities(data);
+      // Load activities from Firebase
+      setSyncStatus('Loading activities from Firebase...');
+      const firebaseActivities = await getActivitiesFromFirebase(String(athleteId));
+      setActivities(firebaseActivities);
 
-      // Store activities in Firebase if athlete data is available
-      if (authData.athlete && authData.athlete.id) {
-        setSyncStatus(`Storing ${data.length} activities in Firebase...`);
-        try {
-          const result = await storeActivitiesInFirebase(
-            String(authData.athlete.id),
-            data
-          );
-          setSyncStatus(`✓ ${result.message}`);
-          setTimeout(() => setSyncStatus(null), 3000);
-        } catch (firebaseError) {
-          console.error('Firebase storage error:', firebaseError);
-          setSyncStatus('⚠️ Activities loaded but Firebase sync failed. Check Firebase configuration.');
-          setTimeout(() => setSyncStatus(null), 5000);
+      // Get sync status to show last sync time
+      try {
+        const syncStatusData = await getSyncStatus(String(athleteId));
+        if (syncStatusData) {
+          setLastSyncTime(syncStatusData.lastSyncTime);
         }
-      } else {
-        setSyncStatus(null);
+      } catch (syncError) {
+        console.warn('Could not fetch sync status:', syncError);
       }
+
+      // Check if we need to auto-sync (background sync if data is old)
+      try {
+        setSyncStatus('Checking for data updates...');
+        const syncResult = await autoSync(authData, 24, (progressMessage) => {
+          setSyncStatus(progressMessage);
+        });
+
+        if (syncResult) {
+          // Data was synced, reload activities
+          setSyncStatus('Refreshing activities...');
+          const updatedActivities = await getActivitiesFromFirebase(String(athleteId));
+          setActivities(updatedActivities);
+          setLastSyncTime(syncResult.lastSyncTime);
+          setSyncStatus('✓ Data updated successfully');
+        } else {
+          setSyncStatus('✓ Activities are up to date');
+        }
+      } catch (syncError) {
+        console.warn('Auto-sync failed, but using cached data:', syncError);
+        setSyncStatus(firebaseActivities.length > 0 ? '✓ Loaded cached activities' : '⚠️ Using cached data (sync failed)');
+      }
+
+      setTimeout(() => setSyncStatus(null), 3000);
+
     } catch (err) {
       console.error('Error loading activities:', err);
       setError('Failed to load activities. Please try again.');
@@ -96,6 +105,55 @@ function Activities() {
     });
   };
 
+  const refreshData = async () => {
+    setLoading(true);
+    setSyncStatus('Refreshing data from Strava...');
+    
+    try {
+      const authData = getStoredAuthData();
+      if (!authData || !authData.accessToken) {
+        navigate('/');
+        return;
+      }
+
+      const syncResult = await autoSync(authData, 0, (progressMessage) => {
+        setSyncStatus(progressMessage);
+      });
+
+      if (syncResult) {
+        const athleteId = authData.athlete?.id;
+        const updatedActivities = await getActivitiesFromFirebase(String(athleteId));
+        setActivities(updatedActivities);
+        setLastSyncTime(syncResult.lastSyncTime);
+        setSyncStatus('✓ Data refreshed successfully');
+      }
+
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (error) {
+      console.error('Refresh failed:', error);
+      setSyncStatus('⚠️ Refresh failed. Using cached data.');
+      setTimeout(() => setSyncStatus(null), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatLastSyncTime = (timeString) => {
+    if (!timeString) return 'Never';
+    
+    const syncTime = new Date(timeString);
+    const now = new Date();
+    const diffMs = now - syncTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  };
+
   const getActivityIcon = (type) => {
     const icons = {
       Run: '🏃',
@@ -115,7 +173,20 @@ function Activities() {
         <button className="back-btn" onClick={() => navigate('/')}>
           ← Back
         </button>
-        <h1>📊 Your Activities</h1>
+        <div className="header-content">
+          <h1>📊 Your Activities</h1>
+          {lastSyncTime && (
+            <p className="sync-info">Last synced: {formatLastSyncTime(lastSyncTime)}</p>
+          )}
+        </div>
+        <button 
+          className="refresh-btn" 
+          onClick={refreshData}
+          disabled={loading}
+          title="Refresh data from Strava"
+        >
+          🔄
+        </button>
       </header>
 
       <main className="activities-main">

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { exchangeToken, storeAuthData } from '../utils/stravaApi';
+import { syncAllDataToFirebase } from '../utils/dataSyncService';
 import './Callback.css';
 
 function Callback() {
   const [searchParams] = useSearchParams();
   const [status, setStatus] = useState('processing');
+  const [progress, setProgress] = useState('Connecting to Strava...');
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
@@ -29,10 +31,31 @@ function Callback() {
       }
 
       try {
+        setProgress('Exchanging authorization code...');
         const data = await exchangeToken(code);
         storeAuthData(data);
-        setStatus('success');
-        setTimeout(() => navigate('/'), 1500);
+        
+        setProgress('Authentication successful! Syncing your data...');
+        
+        // Sync all data from Strava to Firebase
+        try {
+          await syncAllDataToFirebase(data, (progressMessage) => {
+            setProgress(progressMessage);
+          });
+          
+          setStatus('success');
+          setProgress('Data synchronization completed!');
+          setTimeout(() => navigate('/'), 2000);
+          
+        } catch (syncError) {
+          console.error('Data sync error:', syncError);
+          
+          // Even if sync fails, we still have auth, so proceed
+          setStatus('partial-success');
+          setProgress('Authentication successful, but data sync had issues. You can try refreshing data later.');
+          setTimeout(() => navigate('/'), 3000);
+        }
+        
       } catch (err) {
         setStatus('error');
         setError(err.message || 'Failed to authenticate with Strava');
@@ -49,8 +72,8 @@ function Callback() {
         {status === 'processing' && (
           <>
             <div className="spinner"></div>
-            <h2>Connecting to Strava...</h2>
-            <p>Please wait while we authenticate your account</p>
+            <h2>Setting up your account...</h2>
+            <p>{progress}</p>
           </>
         )}
 
@@ -58,7 +81,17 @@ function Callback() {
           <>
             <div className="success-icon">✓</div>
             <h2>Successfully Connected!</h2>
-            <p>Redirecting you to the dashboard...</p>
+            <p>{progress}</p>
+            <p className="redirect-msg">Redirecting you to the dashboard...</p>
+          </>
+        )}
+
+        {status === 'partial-success' && (
+          <>
+            <div className="warning-icon">⚠️</div>
+            <h2>Connected with Partial Sync</h2>
+            <p>{progress}</p>
+            <p className="redirect-msg">Redirecting you to the dashboard...</p>
           </>
         )}
 
