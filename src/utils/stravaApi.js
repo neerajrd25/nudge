@@ -56,17 +56,28 @@ export const refreshAccessToken = async (refreshToken) => {
   }
 };
 
-// Get athlete activities
-export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) => {
+// Get athlete activities with optional range
+export const getAthleteActivities = async (accessToken, page = 1, perPage = 30, after = null, before = null) => {
   try {
+    const params = { page, per_page: perPage };
+    
+    const toUnix = (val) => {
+      if (!val) return null;
+      if (typeof val === 'number') return val;
+      return Math.floor(new Date(val).getTime() / 1000);
+    };
+
+    const afterSec = toUnix(after);
+    const beforeSec = toUnix(before);
+    
+    if (afterSec) params.after = afterSec;
+    if (beforeSec) params.before = beforeSec;
+
     const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      params: {
-        page,
-        per_page: perPage,
-      },
+      params,
     });
     return response.data;
   } catch (error) {
@@ -75,42 +86,30 @@ export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) 
   }
 };
 
-// Get athlete activities for the last 3 months
-export const getAthleteActivitiesLast3Months = async (accessToken) => {
+// Get athlete activities since a given Unix timestamp (seconds). If afterSec is null, behaves like getAllAthleteActivities
+export const getAthleteActivitiesSince = async (accessToken, afterSec = null) => {
   try {
-    // Calculate the timestamp for 3 months ago
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const afterTimestamp = Math.floor(threeMonthsAgo.getTime() / 1000);
-
-    // Fetch activities with pagination
     let allActivities = [];
     let page = 1;
-    const perPage = 100; // Max allowed by Strava API
-    let hasMoreData = true;
+    const perPage = 200;
+    let hasMore = true;
 
-    while (hasMoreData) {
+    while (hasMore) {
+      const params = { page, per_page: perPage };
+      if (afterSec) params.after = afterSec;
+
       const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        params: {
-          after: afterTimestamp,
-          page,
-          per_page: perPage,
-        },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params,
       });
 
       const activities = response.data;
-      
-      if (activities.length === 0) {
-        hasMoreData = false;
+      if (!activities || activities.length === 0) {
+        hasMore = false;
       } else {
         allActivities = allActivities.concat(activities);
-        
-        // If we got less than perPage results, we've reached the end
         if (activities.length < perPage) {
-          hasMoreData = false;
+          hasMore = false;
         } else {
           page++;
         }
@@ -119,7 +118,45 @@ export const getAthleteActivitiesLast3Months = async (accessToken) => {
 
     return allActivities;
   } catch (error) {
-    console.error('Error fetching last 3 months activities:', error);
+    console.error('Error fetching athlete activities since:', error);
+    throw error;
+  }
+};
+
+// Get athlete activities for the last 3 months
+// NOTE: The 3-month-specific activity fetch was removed. Use `getAllAthleteActivities`
+// or `getAthleteActivities` for targeted queries.
+
+// Get ALL athlete activities (paginated) from Strava
+export const getAllAthleteActivities = async (accessToken) => {
+  try {
+    let allActivities = [];
+    let page = 1;
+    const perPage = 200; // keep a reasonably large page size
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { page, per_page: perPage },
+      });
+
+      const activities = response.data;
+      if (!activities || activities.length === 0) {
+        hasMore = false;
+      } else {
+        allActivities = allActivities.concat(activities);
+        if (activities.length < perPage) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+    }
+
+    return allActivities;
+  } catch (error) {
+    console.error('Error fetching all athlete activities:', error);
     throw error;
   }
 };
