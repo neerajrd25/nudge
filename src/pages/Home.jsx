@@ -21,7 +21,31 @@ import { getStoredAuthData, getAuthorizationUrl } from '../utils/stravaApi';
 import { MetricCard } from '../components/ui/MetricCard';
 import { ReadinessGauge } from '../components/ui/ReadinessGauge';
 import { getPlannedWorkouts, savePlannedWorkout } from '../utils/plannerService';
+import { getActivitiesFromFirebase, getAthleteSettings } from '../utils/firebaseService';
+import { calculatePMC, calculateReadinessScore } from '../utils/metrics';
 import { IconTrophy, IconCheck, IconCalendarEvent, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon } from '@tabler/icons-react';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title as ChartTitle,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ChartTitle,
+  Tooltip,
+  Legend
+);
 
 const ACTIVITY_CONFIG = {
   run: { color: 'red.7', icon: <IconRun size={18} />, gradient: 'linear-gradient(45deg, #FF6B6B 0%, #D6336C 100%)' },
@@ -52,6 +76,21 @@ function Home() {
   const [athlete, setAthlete] = useState(null);
   const [todayPlan, setTodayPlan] = useState([]);
   const [loadingPlan, setLoadingPlan] = useState(false);
+  const [pmcMetrics, setPmcMetrics] = useState({ 
+    ctl: 0, 
+    atl: 0, 
+    tsb: 0,
+    trends: {
+      ctl: { vsYesterday: 0, vsWeekAgo: 0 },
+      atl: { vsYesterday: 0, vsWeekAgo: 0 },
+      tsb: { vsYesterday: 0, vsWeekAgo: 0 },
+    }
+  });
+  const [readinessScore, setReadinessScore] = useState({ score: 50, label: 'Unknown', color: 'gray' });
+  const [pmcChartData, setPmcChartData] = useState([]);
+  const [weeklyTSS, setWeeklyTSS] = useState({ current: 0, target: 600 });
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -60,6 +99,7 @@ function Home() {
       setIsAuthenticated(true);
       setAthlete(authData.athlete);
       fetchTodayPlan(authData.athlete.id);
+      fetchPMCMetrics(authData.athlete.id);
     }
   }, []);
 
@@ -76,8 +116,233 @@ function Home() {
     }
   };
 
+  const fetchPMCMetrics = async (athleteId) => {
+    setLoadingMetrics(true);
+    try {
+      // Get athlete settings for accurate TSS calculation
+      const settings = await getAthleteSettings(athleteId);
+      
+      // Fetch activities from the last 90 days for accurate PMC calculation
+      const activities = await getActivitiesFromFirebase(athleteId, 500);
+      
+      if (activities && activities.length > 0) {
+        // Calculate PMC (CTL, ATL, TSB)
+        const pmcData = calculatePMC(activities, settings);
+        
+        if (pmcData && pmcData.length > 0) {
+          // Get the latest PMC values
+          const latestPMC = pmcData[pmcData.length - 1];
+          
+          // Calculate trends (vs yesterday and vs 7 days ago)
+          const yesterdayPMC = pmcData.length > 1 ? pmcData[pmcData.length - 2] : null;
+          const weekAgoPMC = pmcData.length > 7 ? pmcData[pmcData.length - 8] : null;
+          
+          const calculateTrend = (current, previous) => {
+            if (!previous || previous === 0) return 0;
+            return current - previous;
+          };
+          
+          setPmcMetrics({
+            ctl: latestPMC.ctl || 0,
+            atl: latestPMC.atl || 0,
+            tsb: latestPMC.tsb || 0,
+            trends: {
+              ctl: {
+                vsYesterday: yesterdayPMC ? calculateTrend(latestPMC.ctl, yesterdayPMC.ctl) : 0,
+                vsWeekAgo: weekAgoPMC ? calculateTrend(latestPMC.ctl, weekAgoPMC.ctl) : 0,
+              },
+              atl: {
+                vsYesterday: yesterdayPMC ? calculateTrend(latestPMC.atl, yesterdayPMC.atl) : 0,
+                vsWeekAgo: weekAgoPMC ? calculateTrend(latestPMC.atl, weekAgoPMC.atl) : 0,
+              },
+              tsb: {
+                vsYesterday: yesterdayPMC ? calculateTrend(latestPMC.tsb, yesterdayPMC.tsb) : 0,
+                vsWeekAgo: weekAgoPMC ? calculateTrend(latestPMC.tsb, weekAgoPMC.tsb) : 0,
+              },
+            },
+          });
+
+          // Calculate readiness score
+          const readinessData = calculateReadinessScore(activities, settings);
+          setReadinessScore(readinessData);
+
+          // Get last 30 days of PMC data for the chart
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          const chartData = pmcData.filter(point => new Date(point.date) >= thirtyDaysAgo);
+          setPmcChartData(chartData);
+        }
+        
+        // Calculate weekly TSS (Monday to Sunday of current week)
+        const now = new Date();
+        const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+        
+        // Calculate Monday of current week (Monday = 1, Sunday = 0)
+        const mondayOfWeek = new Date(now);
+        mondayOfWeek.setDate(now.getDate() - (currentDay === 0 ? 6 : currentDay - 1));
+        mondayOfWeek.setHours(0, 0, 0, 0);
+        
+        // Calculate Sunday of current week (next Sunday)
+        const sundayOfWeek = new Date(mondayOfWeek);
+        sundayOfWeek.setDate(mondayOfWeek.getDate() + 6);
+        sundayOfWeek.setHours(23, 59, 59, 999);
+        
+        const weeklyActivities = activities.filter(activity => {
+          const activityDate = new Date(activity.start_date);
+          return activityDate >= mondayOfWeek && activityDate <= sundayOfWeek;
+        });
+        
+        const currentWeeklyTSS = weeklyActivities.reduce((sum, activity) => {
+          return sum + (activity.tss || 0);
+        }, 0);
+        
+        setWeeklyTSS({
+          current: Math.round(currentWeeklyTSS),
+          target: 600, // This could be made dynamic based on athlete settings
+        });
+        
+        setLastSync(new Date());
+      }
+    } catch (error) {
+      console.error('Error fetching PMC metrics:', error);
+    } finally {
+      setLoadingMetrics(false);
+    }
+  };
+
   const handleLogin = () => {
     window.location.href = getAuthorizationUrl();
+  };
+
+  const handleRefreshMetrics = async () => {
+    if (athlete && athlete.id) {
+      await fetchPMCMetrics(athlete.id);
+    }
+  };
+
+  const getPMCChartData = () => {
+    if (!pmcChartData || pmcChartData.length === 0) return null;
+
+    const labels = pmcChartData.map(point => {
+      const date = new Date(point.date);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    });
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'CTL (Fitness)',
+          data: pmcChartData.map(point => point.ctl),
+          borderColor: '#4CAF50',
+          backgroundColor: 'rgba(76, 175, 80, 0.1)',
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+        },
+        {
+          label: 'ATL (Fatigue)',
+          data: pmcChartData.map(point => point.atl),
+          borderColor: '#FF9800',
+          backgroundColor: 'rgba(255, 152, 0, 0.1)',
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+        },
+        {
+          label: 'TSB (Form)',
+          data: pmcChartData.map(point => point.tsb),
+          borderColor: '#2196F3',
+          backgroundColor: 'rgba(33, 150, 243, 0.1)',
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+        },
+        {
+          label: 'Workout Days',
+          data: pmcChartData.map(point => point.tss > 0 ? 0 : null), // Show at y=0 for workout days
+          borderColor: 'rgba(255, 255, 255, 0.8)',
+          backgroundColor: 'rgba(255, 255, 255, 0.8)',
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointStyle: 'rect',
+          showLine: false,
+          pointBorderWidth: 1,
+          pointBorderColor: 'rgba(255, 255, 255, 0.8)',
+        },
+      ],
+    };
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top',
+        labels: {
+          usePointStyle: true,
+          padding: 20,
+          filter: function(legendItem, data) {
+            // Hide the "Workout Days" dataset from legend
+            return legendItem.text !== 'Workout Days';
+          },
+        },
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        callbacks: {
+          label: function(context) {
+            if (context.dataset.label === 'Workout Days') {
+              return null; // Don't show tooltip for workout day indicators
+            }
+            return `${context.dataset.label}: ${context.parsed.y}`;
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        display: true,
+        title: {
+          display: true,
+          text: 'Date (● = Workout Day)',
+        },
+        ticks: {
+          maxTicksLimit: 7,
+        },
+      },
+      y: {
+        display: true,
+        title: {
+          display: true,
+          text: 'Training Load',
+        },
+        beginAtZero: true,
+      },
+    },
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false,
+    },
+  };
+
+  const getTimeSinceSync = () => {
+    if (!lastSync) return "Not synced yet";
+    const now = new Date();
+    const diffMs = now - lastSync;
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+    
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
   };
 
   return (
@@ -171,10 +436,19 @@ function Home() {
                 <Avatar src={athlete?.profile} size="xl" radius="xl" />
                 <Stack gap={0}>
                   <Title order={1}>Insights for {athlete?.firstname}</Title>
-                  <Text c="dimmed" size="sm">Last sync: 12 minutes ago • Everything looks dialed.</Text>
+                  <Text c="dimmed" size="sm">
+                    Last sync: {getTimeSinceSync()} • {loadingMetrics ? "Syncing..." : "Everything looks dialed."}
+                  </Text>
                 </Stack>
               </Group>
-              <Button variant="light" size="sm" onClick={() => navigate('/activities')}>Sync Now</Button>
+              <Button 
+                variant="light" 
+                size="sm" 
+                onClick={handleRefreshMetrics}
+                loading={loadingMetrics}
+              >
+                Sync Metrics
+              </Button>
             </Group>
           </Paper>
 
@@ -184,39 +458,134 @@ function Home() {
               <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
                 <MetricCard
                   title="Fitness (CTL)"
-                  value="42"
-                  trend="up"
-                  trendValue="+12%"
-                  description="Building solid base"
+                  value={loadingMetrics ? "..." : String(Math.round(pmcMetrics.ctl))}
+                  trend={pmcMetrics.trends?.ctl?.vsYesterday > 0 ? "up" : pmcMetrics.trends?.ctl?.vsYesterday < 0 ? "down" : "neutral"}
+                  trendValue={pmcMetrics.trends?.ctl?.vsYesterday !== 0 ? 
+                    `${pmcMetrics.trends.ctl.vsYesterday > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.ctl.vsYesterday)} (1d)` : 
+                    pmcMetrics.trends?.ctl?.vsWeekAgo !== 0 ?
+                    `${pmcMetrics.trends.ctl.vsWeekAgo > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.ctl.vsWeekAgo)} (7d)` :
+                    "-"}
+                  description={
+                    pmcMetrics.ctl < 20 ? "Building base fitness" :
+                    pmcMetrics.ctl < 40 ? "Developing endurance" :
+                    pmcMetrics.ctl < 60 ? "Good aerobic fitness" :
+                    pmcMetrics.ctl < 80 ? "Strong fitness level" :
+                    pmcMetrics.ctl < 100 ? "Elite fitness" :
+                    "Peak performance"
+                  }
+                  color={
+                    pmcMetrics.ctl < 20 ? "gray" :
+                    pmcMetrics.ctl < 40 ? "blue" :
+                    pmcMetrics.ctl < 80 ? "green" :
+                    "violet"
+                  }
                 />
                 <MetricCard
                   title="Fatigue (ATL)"
-                  value="58"
-                  trend="up"
-                  trendValue="+5%"
-                  description="Moderate loading"
-                  color="orange"
+                  value={loadingMetrics ? "..." : String(Math.round(pmcMetrics.atl))}
+                  trend={pmcMetrics.trends?.atl?.vsYesterday > 0 ? "up" : pmcMetrics.trends?.atl?.vsYesterday < 0 ? "down" : "neutral"}
+                  trendValue={pmcMetrics.trends?.atl?.vsYesterday !== 0 ? 
+                    `${pmcMetrics.trends.atl.vsYesterday > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.atl.vsYesterday)} (1d)` : 
+                    pmcMetrics.trends?.atl?.vsWeekAgo !== 0 ?
+                    `${pmcMetrics.trends.atl.vsWeekAgo > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.atl.vsWeekAgo)} (7d)` :
+                    "-"}
+                  description={
+                    pmcMetrics.atl < 20 ? "Very low fatigue - can train hard" :
+                    pmcMetrics.atl < 40 ? "Low fatigue - good recovery" :
+                    pmcMetrics.atl < 60 ? "Moderate fatigue - balanced" :
+                    pmcMetrics.atl < 80 ? "High fatigue - monitor closely" :
+                    pmcMetrics.atl < 100 ? "Very high fatigue - reduce load" :
+                    "Extreme fatigue - rest required"
+                  }
+                  color={
+                    pmcMetrics.atl < 40 ? "green" :
+                    pmcMetrics.atl < 80 ? "blue" :
+                    pmcMetrics.atl < 100 ? "orange" :
+                    "red"
+                  }
                 />
                 <MetricCard
                   title="Form (TSB)"
-                  value="-16"
-                  trend="down"
-                  trendValue="-2"
-                  description="Optimal Training Zone"
-                  color="green"
+                  value={loadingMetrics ? "..." : String(Math.round(pmcMetrics.tsb))}
+                  trend={pmcMetrics.trends?.tsb?.vsYesterday > 0 ? "up" : pmcMetrics.trends?.tsb?.vsYesterday < 0 ? "down" : "neutral"}
+                  trendValue={pmcMetrics.trends?.tsb?.vsYesterday !== 0 ? 
+                    `${pmcMetrics.trends.tsb.vsYesterday > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.tsb.vsYesterday)} (1d)` : 
+                    pmcMetrics.trends?.tsb?.vsWeekAgo !== 0 ?
+                    `${pmcMetrics.trends.tsb.vsWeekAgo > 0 ? '+' : ''}${Math.round(pmcMetrics.trends.tsb.vsWeekAgo)} (7d)` :
+                    "-"}
+                  description={
+                    pmcMetrics.tsb < -30 ? "Severely overreached - rest immediately" :
+                    pmcMetrics.tsb < -20 ? "High risk of overtraining - reduce volume" :
+                    pmcMetrics.tsb < -10 ? "Fatigued - focus on recovery" :
+                    pmcMetrics.tsb < -5 ? "Optimal training zone - can push hard" :
+                    pmcMetrics.tsb < 5 ? "Maintaining fitness - balanced training" :
+                    pmcMetrics.tsb < 15 ? "Fresh & rested - good for key sessions" :
+                    pmcMetrics.tsb < 25 ? "Very fresh - race ready" :
+                    "Peak freshness - optimal performance window"
+                  }
+                  color={
+                    pmcMetrics.tsb < -20 ? "red" :
+                    pmcMetrics.tsb < -5 ? "orange" :
+                    pmcMetrics.tsb < 15 ? "green" :
+                    "blue"
+                  }
                 />
               </SimpleGrid>
 
               <Title order={3} mt="xl" mb="md">Weekly Progress</Title>
               <Paper withBorder p="lg" radius="lg" bg="midnight.9">
                 <Group justify="space-between" mb="xs">
-                  <Text fw={700}>Training Load Target</Text>
-                  <Text fw={900} c="blue">420 / 600 TSS</Text>
+                  <Stack gap={2}>
+                    <Text fw={700}>Training Load Target</Text>
+                    <Text size="xs" c="dimmed">
+                      {(() => {
+                        const now = new Date();
+                        const currentDay = now.getDay();
+                        const mondayOfWeek = new Date(now);
+                        mondayOfWeek.setDate(now.getDate() - (currentDay === 0 ? 6 : currentDay - 1));
+                        const sundayOfWeek = new Date(mondayOfWeek);
+                        sundayOfWeek.setDate(mondayOfWeek.getDate() + 6);
+                        return `${mondayOfWeek.toLocaleDateString()} - ${sundayOfWeek.toLocaleDateString()}`;
+                      })()}
+                    </Text>
+                  </Stack>
+                  <Text fw={900} c="blue">
+                    {loadingMetrics ? "..." : `${weeklyTSS.current} / ${weeklyTSS.target} TSS`}
+                  </Text>
                 </Group>
                 <Box h={rem(12)} bg="midnight.7" style={{ borderRadius: rem(6), overflow: 'hidden' }}>
-                  <Box h="100%" w="70%" bg="blue.6" style={{ borderRadius: rem(6) }} />
+                  <Box 
+                    h="100%" 
+                    w={`${Math.min(100, (weeklyTSS.current / weeklyTSS.target) * 100)}%`} 
+                    bg={
+                      weeklyTSS.current >= weeklyTSS.target ? "green.6" :
+                      weeklyTSS.current >= weeklyTSS.target * 0.7 ? "blue.6" :
+                      "yellow.6"
+                    }
+                    style={{ borderRadius: rem(6), transition: 'width 0.5s ease' }} 
+                  />
                 </Box>
-                <Text size="xs" c="dimmed" mt="sm">You are on track to hit your weekly fatigue target. Keep it up!</Text>
+                <Text size="xs" c="dimmed" mt="sm">
+                  {weeklyTSS.current >= weeklyTSS.target 
+                    ? "Great job! You've hit your weekly target!" 
+                    : weeklyTSS.current >= weeklyTSS.target * 0.7
+                    ? "You are on track to hit your weekly fatigue target. Keep it up!"
+                    : "Keep pushing to reach your weekly goal."}
+                </Text>
+              </Paper>
+
+              <Title order={3} mt="xl" mb="md">Training Load Trends (30 Days)</Title>
+              <Paper withBorder p="lg" radius="lg" bg="midnight.9">
+                <Box h={rem(300)}>
+                  {getPMCChartData() ? (
+                    <Line data={getPMCChartData()} options={chartOptions} />
+                  ) : (
+                    <Stack align="center" justify="center" h="100%" c="dimmed">
+                      <Text>Not enough data to display trends</Text>
+                      <Text size="sm">Complete more workouts to see your training load progression</Text>
+                    </Stack>
+                  )}
+                </Box>
               </Paper>
 
               <Title order={3} mt="xl" mb="md">Today's Plan</Title>
@@ -298,7 +667,13 @@ function Home() {
 
             <Stack gap="lg">
               <Title order={3}>Readiness Score</Title>
-              <ReadinessGauge score={84} label="Optimal Recovery" />
+              <ReadinessGauge 
+                score={readinessScore.score} 
+                label={readinessScore.label}
+                color={readinessScore.color}
+                tsb={readinessScore.tsb}
+                daysSinceLastActivity={readinessScore.daysSinceLastActivity}
+              />
 
               <Title order={3}>AI Recommendations</Title>
               <Paper withBorder p="md" radius="lg" bg="midnight.9">

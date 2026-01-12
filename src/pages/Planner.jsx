@@ -24,6 +24,7 @@ import { getPlannedWorkouts, savePlannedWorkout, importPlannedWorkouts, deletePl
 import { getActivitiesByDateRange } from '../utils/firebaseService';
 import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink } from '@tabler/icons-react';
 import { getStoredAuthData, getAthleteActivities, isTokenExpired, refreshAccessToken, storeAuthData } from '../utils/stravaApi';
+import { calculateTSS } from '../utils/metrics';
 
 const ACTIVITY_CONFIG = {
   run: { color: 'red.7', icon: <IconRun size={14} />, gradient: 'linear-gradient(45deg, #FF6B6B 0%, #D6336C 100%)' },
@@ -88,11 +89,15 @@ function getWeeksInMonth(date) {
   let currentWeek = [];
   const startDayOfWeek = firstDay.getDay();
 
-  for (let i = 0; i < startDayOfWeek; i++) currentWeek.push(null);
+  // Adjust for Monday start (getDay() returns 0 for Sunday, 1 for Monday, etc.)
+  // If first day is Sunday (0), we need 6 padding days. If Monday (1), 0 padding, etc.
+  const paddingDays = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
+  for (let i = 0; i < paddingDays; i++) currentWeek.push(null);
+
   for (let day = 1; day <= lastDay.getDate(); day++) {
     const currentDate = new Date(year, month, day);
     currentWeek.push(currentDate);
-    if (currentDate.getDay() === 6) {
+    if (currentDate.getDay() === 0) { // Sunday is the end of the week
       weeks.push(currentWeek);
       currentWeek = [];
     }
@@ -104,8 +109,47 @@ function getWeeksInMonth(date) {
   return weeks;
 }
 
+function estimatePlannedTSS(item) {
+  const durationHours = (item.plannedDuration || 0) / 60;
+  const activityType = getActivityType(item);
+  
+  // Base TSS per hour based on activity type and intensity
+  let baseTSSPerHour = 50; // Default moderate intensity
+  
+  if (activityType === 'run') {
+    // Check for intensity indicators in activity name or details
+    const nameAndDetails = `${item.plannedActivity} ${item.details || ''}`.toLowerCase();
+    if (nameAndDetails.includes('easy') || nameAndDetails.includes('recovery')) {
+      baseTSSPerHour = 30;
+    } else if (nameAndDetails.includes('tempo') || nameAndDetails.includes('steady') || nameAndDetails.includes('threshold')) {
+      baseTSSPerHour = 70;
+    } else if (nameAndDetails.includes('interval') || nameAndDetails.includes('speed') || nameAndDetails.includes('vo2')) {
+      baseTSSPerHour = 90;
+    } else if (nameAndDetails.includes('race') || nameAndDetails.includes('competition')) {
+      baseTSSPerHour = 100;
+    }
+  } else if (activityType === 'cycle') {
+    const nameAndDetails = `${item.plannedActivity} ${item.details || ''}`.toLowerCase();
+    if (nameAndDetails.includes('easy') || nameAndDetails.includes('recovery')) {
+      baseTSSPerHour = 40;
+    } else if (nameAndDetails.includes('tempo') || nameAndDetails.includes('steady')) {
+      baseTSSPerHour = 60;
+    } else if (nameAndDetails.includes('interval') || nameAndDetails.includes('vo2')) {
+      baseTSSPerHour = 80;
+    } else if (nameAndDetails.includes('race') || nameAndDetails.includes('competition')) {
+      baseTSSPerHour = 120;
+    }
+  } else if (activityType === 'strength' || activityType === 'workout') {
+    baseTSSPerHour = 40; // Strength training has lower TSS
+  } else if (activityType === 'rest' || activityType === 'mobility') {
+    baseTSSPerHour = 10; // Very low TSS for recovery activities
+  }
+  
+  return Math.round(durationHours * baseTSSPerHour);
+}
+
 function getWeekTotals(week, itemsByDate) {
-  let plannedMinutes = 0, actualMinutes = 0, completed = 0, total = 0;
+  let plannedMinutes = 0, actualMinutes = 0, completed = 0, total = 0, plannedTSS = 0, actualTSS = 0;
   week.forEach(day => {
     if (!day) return;
     const items = itemsByDate[formatDateKey(day)] || [];
@@ -114,9 +158,22 @@ function getWeekTotals(week, itemsByDate) {
       actualMinutes += item.actualDuration || 0;
       total++;
       if (item.status === 'done') completed++;
+      
+      // Calculate TSS
+      if (item.isActual) {
+        // For actual activities, use the calculateTSS function
+        actualTSS += item.tss || calculateTSS(item, null) || 0;
+      } else {
+        // For planned activities, estimate TSS based on duration and activity type
+        const estimatedTSS = estimatePlannedTSS(item);
+        plannedTSS += estimatedTSS;
+        if (item.status === 'done') {
+          actualTSS += estimatedTSS; // Use estimated TSS for completed planned activities
+        }
+      }
     });
   });
-  return { plannedMinutes, actualMinutes, completed, total };
+  return { plannedMinutes, actualMinutes, completed, total, plannedTSS, actualTSS };
 }
 
 const Planner = ({ initialDate = new Date() }) => {
@@ -208,6 +265,7 @@ const Planner = ({ initialDate = new Date() }) => {
         setNewWorkout({
           plannedActivity: '',
           plannedDuration: 30,
+          plannedDistance: '',
           date: formatDateKey(new Date()),
           details: '',
           focus: '',
@@ -280,6 +338,7 @@ const Planner = ({ initialDate = new Date() }) => {
       id: item.id,
       plannedActivity: item.plannedActivity || '',
       plannedDuration: item.plannedDuration || 30,
+      plannedDistance: item.plannedDistance || '',
       date: item.date || formatDateKey(new Date()),
       details: item.details || '',
       focus: item.focus || '',
@@ -410,7 +469,7 @@ const Planner = ({ initialDate = new Date() }) => {
       <Paper withBorder radius="lg" p={0} style={{ overflow: 'hidden', backgroundColor: 'var(--mantine-color-midnight-9)' }}>
         <Box bg="midnight.9" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
           <SimpleGrid cols={isMobile ? 1 : 8} spacing={0}>
-            {!isMobile && ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Weekly'].map(day => (
+            {!isMobile && ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Weekly'].map(day => (
               <Box key={day} py="md" ta="center">
                 <Text size="11px" fw={900} tt="uppercase" c="dimmed" ls="1px">{day}</Text>
               </Box>
@@ -459,63 +518,90 @@ const Planner = ({ initialDate = new Date() }) => {
                             <Text size={isMobile ? 'md' : 'sm'} fw={900} c={isToday(day) ? 'blue' : 'dimmed'}>
                               {day.getDate()}
                             </Text>
-                            {isMobile && <Text size="10px" fw={700} tt="uppercase" opacity={0.5}>{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day.getDay()]}</Text>}
+                            {isMobile && <Text size="10px" fw={700} tt="uppercase" opacity={0.5}>{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][(day.getDay() + 6) % 7]}</Text>}
                           </Stack>
 
                           <Stack gap={6} style={{ flex: 1, minWidth: 0 }}>
-                            {items.map((item, iIdx) => {
-                              const type = getActivityType(item);
-                              const config = ACTIVITY_CONFIG[type] || ACTIVITY_CONFIG.workout;
-                              const isRaceA = item.raceType === 'A';
-                              const isDone = item.status === 'done';
-
-                              return (
-                                <Paper
-                                  key={iIdx}
-                                  draggable={!item.isActual}
-                                  onDragStart={(e) => !item.isActual && handleDragStart(e, item)}
-                                  onDragEnd={handleDragEnd}
-                                  withBorder
-                                  px={10}
-                                  py={8}
-                                  radius="md"
-                                  bg={item.isActual ? 'rgba(252, 76, 2, 0.15)' : (isDone ? 'green.8' : (isRaceA ? 'maroon' : config.color))}
-                                  style={{
-                                    backgroundImage: item.isActual ? 'linear-gradient(45deg, rgba(252, 76, 2, 0.2) 0%, rgba(252, 76, 2, 0) 100%)' : (isDone ? 'none' : config.gradient),
-                                    borderColor: item.isActual ? '#FC4C02' : (isRaceA ? 'var(--mantine-color-yellow-4)' : 'rgba(255,255,255,0.1)'),
-                                    borderWidth: (isRaceA || item.isActual) ? '2px' : '1px',
-                                    boxShadow: isRaceA ? '0 0 15px rgba(255,215,0,0.5), inset 0 0 5px rgba(255,255,255,0.2)' : '0 4px 6px rgba(0,0,0,0.1)',
-                                    cursor: item.isActual ? 'default' : 'grab',
-                                    transition: 'transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-                                  }}
-                                  onMouseEnter={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1.02) translateY(-2px)')}
-                                  onMouseLeave={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1) translateY(0)')}
-                                  onClick={(e) => {
-                                    if (!item.isActual) {
-                                      e.stopPropagation();
-                                      setSelectedDate(new Date(item.date + 'T00:00:00'));
-                                    }
-                                  }}
-                                >
-                                  <Stack gap={0}>
-                                    <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
-                                      <Group gap={6} wrap="nowrap" style={{ flex: 1, overflow: 'hidden' }}>
-                                        <Box style={{ opacity: 0.9, display: 'flex' }}>
-                                          {item.isActual ? <IconBrandStrava size={14} color="#FC4C02" /> : config.icon}
-                                        </Box>
-                                        <Text size="11px" fw={900} c="white" ls="0.5px" truncate="end" style={{ flex: 1 }}>
-                                          {isRaceA && '🏆 '}{item.plannedActivity}
-                                        </Text>
-                                      </Group>
-                                      {!item.isActual && <IconArrowsMove size={10} color="white" style={{ opacity: 0.5, flexShrink: 0 }} />}
+                            {items.length === 0 ? (
+                              <Paper
+                                withBorder
+                                px={10}
+                                py={8}
+                                radius="md"
+                                bg="gray.8"
+                                style={{
+                                  borderColor: 'rgba(255,255,255,0.1)',
+                                  borderWidth: '1px',
+                                }}
+                              >
+                                <Stack gap={0}>
+                                  <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
+                                    <Group gap={6} wrap="nowrap" style={{ flex: 1, overflow: 'hidden' }}>
+                                      <Box style={{ opacity: 0.9, display: 'flex' }}>
+                                        <IconMoon size={14} color="white" />
+                                      </Box>
+                                      <Text size="11px" fw={900} c="white" ls="0.5px" truncate="end" style={{ flex: 1 }}>
+                                        Rest Day
+                                      </Text>
                                     </Group>
-                                    <Text size="10px" c="white" opacity={0.8} truncate="end" fw={500}>
-                                      {item.details}
-                                    </Text>
-                                  </Stack>
-                                </Paper>
-                              );
-                            })}
+                                  </Group>
+                                </Stack>
+                              </Paper>
+                            ) : (
+                              items.map((item, iIdx) => {
+                                const type = getActivityType(item);
+                                const config = ACTIVITY_CONFIG[type] || ACTIVITY_CONFIG.workout;
+                                const isRaceA = item.raceType === 'A';
+                                const isDone = item.status === 'done';
+
+                                return (
+                                  <Paper
+                                    key={iIdx}
+                                    draggable={!item.isActual}
+                                    onDragStart={(e) => !item.isActual && handleDragStart(e, item)}
+                                    onDragEnd={handleDragEnd}
+                                    withBorder
+                                    px={10}
+                                    py={8}
+                                    radius="md"
+                                    bg={item.isActual ? 'rgba(252, 76, 2, 0.15)' : (isDone ? 'green.8' : (isRaceA ? 'maroon' : config.color))}
+                                    style={{
+                                      backgroundImage: item.isActual ? 'linear-gradient(45deg, rgba(252, 76, 2, 0.2) 0%, rgba(252, 76, 2, 0) 100%)' : (isDone ? 'none' : config.gradient),
+                                      borderColor: item.isActual ? '#FC4C02' : (isRaceA ? 'var(--mantine-color-yellow-4)' : 'rgba(255,255,255,0.1)'),
+                                      borderWidth: (isRaceA || item.isActual) ? '2px' : '1px',
+                                      boxShadow: isRaceA ? '0 0 15px rgba(255,215,0,0.5), inset 0 0 5px rgba(255,255,255,0.2)' : '0 4px 6px rgba(0,0,0,0.1)',
+                                      cursor: item.isActual ? 'default' : 'grab',
+                                      transition: 'transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                                    }}
+                                    onMouseEnter={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1.02) translateY(-2px)')}
+                                    onMouseLeave={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1) translateY(0)')}
+                                    onClick={(e) => {
+                                      if (!item.isActual) {
+                                        e.stopPropagation();
+                                        setSelectedDate(new Date(item.date + 'T00:00:00'));
+                                      }
+                                    }}
+                                  >
+                                    <Stack gap={0}>
+                                      <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
+                                        <Group gap={6} wrap="nowrap" style={{ flex: 1, overflow: 'hidden' }}>
+                                          <Box style={{ opacity: 0.9, display: 'flex' }}>
+                                            {item.isActual ? <IconBrandStrava size={14} color="#FC4C02" /> : config.icon}
+                                          </Box>
+                                          <Text size="11px" fw={900} c="white" ls="0.5px" truncate="end" style={{ flex: 1 }}>
+                                            {isRaceA && '🏆 '}{item.plannedActivity}
+                                          </Text>
+                                        </Group>
+                                        {!item.isActual && <IconArrowsMove size={10} color="white" style={{ opacity: 0.5, flexShrink: 0 }} />}
+                                      </Group>
+                                      <Text size="10px" c="white" opacity={0.8} truncate="end" fw={500}>
+                                        {item.details}
+                                      </Text>
+                                    </Stack>
+                                  </Paper>
+                                );
+                              })
+                            )}
                           </Stack>
                         </Group>
                       )}
@@ -540,6 +626,14 @@ const Planner = ({ initialDate = new Date() }) => {
                         <Group justify="center" gap={4}>
                           <Text size="10px" fw={600} c="orange">ACTUAL:</Text>
                           <Text size="10px" fw={900} c="orange">{Math.round(totals.actualMinutes / 60)}h</Text>
+                        </Group>
+                        <Group justify="center" gap={4}>
+                          <Text size="10px" fw={600} c="dimmed">TSS:</Text>
+                          <Text size="10px" fw={900}>{totals.plannedTSS}</Text>
+                        </Group>
+                        <Group justify="center" gap={4}>
+                          <Text size="10px" fw={600} c="orange">ACTUAL TSS:</Text>
+                          <Text size="10px" fw={900} c="orange">{totals.actualTSS}</Text>
                         </Group>
                       </Stack>
                       <Badge

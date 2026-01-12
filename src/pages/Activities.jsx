@@ -21,6 +21,8 @@ import {
   Box,
   rem,
   Divider,
+  Grid,
+  SegmentedControl,
 } from '@mantine/core';
 import {
   IconRun,
@@ -44,6 +46,7 @@ import {
 } from '../utils/stravaApi';
 import { getActivityFromFirebase, getActivitiesFromFirebase, storeActivitiesInFirebase, getAthleteSettings } from '../utils/firebaseService';
 import { autoMatchActivities, manualLinkActivityToWorkout } from '../utils/plannerService';
+import { MetricCard } from '../components/ui/MetricCard';
 
 function Activities() {
   const [activities, setActivities] = useState([]);
@@ -60,68 +63,77 @@ function Activities() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [filterType, setFilterType] = useState('');
+  const [monthlyStats, setMonthlyStats] = useState({
+    current: { count: 0, distance: 0, time: 0, elevation: 0, monthName: '' },
+    previous: { count: 0, distance: 0, time: 0, elevation: 0, monthName: '' }
+  });
   const navigate = useNavigate();
 
-  const loadActivities = async () => {
-    setLoading(true);
-    try {
-      const authData = getStoredAuthData();
-      if (!authData || !authData.accessToken) {
-        navigate('/');
-        return;
-      }
-      let accessToken = authData.accessToken;
-      if (isTokenExpired() && authData.refreshToken) {
-        const newAuthData = await refreshAccessToken(authData.refreshToken);
-        storeAuthData(newAuthData);
-        accessToken = newAuthData.access_token;
-      }
-      setSyncStatus('Fetching activities from Strava...');
-      const data = await getAllAthleteActivities(accessToken);
-      setActivities(data);
+  const calculateStats = (allActivities) => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
+    const prevMonth = prevMonthDate.getMonth();
+    const prevMonthYear = prevMonthDate.getFullYear();
 
-      const athleteId = String(authData.athlete.id);
-      const matches = await autoMatchActivities(athleteId, data);
+    const currentStats = { count: 0, distance: 0, time: 0, elevation: 0, monthName: now.toLocaleString('default', { month: 'long' }) };
+    const previousStats = { count: 0, distance: 0, time: 0, elevation: 0, monthName: prevMonthDate.toLocaleString('default', { month: 'long' }) };
 
-      let statusMsg = `✓ Activities loaded.`;
-      if (matches.matched && matches.matched.length > 0) statusMsg += ` ${matches.matched.length} matched.`;
-      if (matches.potential && matches.potential.length > 0) {
-        // Build map: workout.id -> [{ workout, activities: [...] }]
-        const workoutMap = new Map();
-        matches.potential.forEach(({ activity, potentialWorkouts }) => {
-          potentialWorkouts.forEach(workout => {
-            if (!workoutMap.has(workout.id)) {
-              workoutMap.set(workout.id, { workout, activities: [] });
-            }
-            workoutMap.get(workout.id).activities.push(activity);
-          });
-        });
-        setAvailableWorkoutsMap(workoutMap);
-        setShowMatchModal(true);
-        statusMsg += ` ${workoutMap.size} suggestions.`;
+    allActivities.forEach(activity => {
+      const date = new Date(activity.start_date);
+      const m = date.getMonth();
+      const y = date.getFullYear();
+
+      if (m === currentMonth && y === currentYear) {
+        currentStats.count++;
+        currentStats.distance += (activity.distance || 0);
+        currentStats.time += (activity.moving_time || 0);
+        currentStats.elevation += (activity.total_elevation_gain || 0);
+      } else if (m === prevMonth && y === prevMonthYear) {
+        previousStats.count++;
+        previousStats.distance += (activity.distance || 0);
+        previousStats.time += (activity.moving_time || 0);
+        previousStats.elevation += (activity.total_elevation_gain || 0);
       }
-      setSyncStatus(statusMsg);
-      setTimeout(() => setSyncStatus(null), 2000);
-    } catch (err) {
-      setError('Failed to load activities.');
-      setSyncStatus(null);
-    } finally {
-      setLoading(false);
-    }
+    });
+
+    setMonthlyStats({ current: currentStats, previous: previousStats });
   };
 
-  const [processingManualMatch, setProcessingManualMatch] = useState(false);
-  const [showMatchModal, setShowMatchModal] = useState(false);
-  // Map of workout.id -> { workout, activity }
-  const [availableWorkoutsMap, setAvailableWorkoutsMap] = useState(new Map());
+  const formatTrend = (current, previous, unit = '', isDistance = false) => {
+    const diff = current - previous;
+    const sign = diff >= 0 ? '+' : '-';
+    const absDiff = Math.abs(diff);
+    let displayDiff = absDiff;
+    
+    if (isDistance) {
+      displayDiff = (absDiff / 1000).toFixed(1);
+    } else if (typeof absDiff === 'number' && !Number.isInteger(absDiff)) {
+      displayDiff = absDiff.toFixed(1);
+    }
 
-  const autoSyncOnMount = async () => {
+    return `${sign}${displayDiff}${unit} vs ${monthlyStats.previous.monthName}`;
+  };
+
+  const formatDurationTrend = (currentSec, previousSec) => {
+    const diff = currentSec - previousSec;
+    const sign = diff >= 0 ? '+' : '-';
+    const absDiff = Math.abs(diff);
+    const hours = Math.floor(absDiff / 3600);
+    const minutes = Math.floor((absDiff % 3600) / 60);
+    const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    return `${sign}${timeStr} vs ${monthlyStats.previous.monthName}`;
+  };
+
+  const syncWithStrava = async (isManual = false) => {
     try {
       const authData = getStoredAuthData();
       if (!authData || !authData.accessToken) return;
       const athleteId = String(authData.athlete.id);
 
-      // Background Fetch Settings
+      // 1. Get settings and current state (last activity date)
       const [userSettings, existing] = await Promise.all([
         getAthleteSettings(athleteId),
         getActivitiesFromFirebase(athleteId, 1, null, filterType)
@@ -129,7 +141,7 @@ function Activities() {
 
       let accessToken = authData.accessToken;
       if (isTokenExpired() && authData.refreshToken) {
-        setSyncStatus('Refreshing Strava token...');
+        if (isManual) setSyncStatus('Refreshing Strava token...');
         const newAuthData = await refreshAccessToken(authData.refreshToken);
         storeAuthData(newAuthData);
         accessToken = newAuthData.access_token;
@@ -142,20 +154,23 @@ function Activities() {
         if (dt) afterSec = Math.floor(new Date(dt).getTime() / 1000);
       }
 
+      if (isManual) setLoading(true);
       setSyncing(true);
+      setProgressPercent(10);
+      
       const perPage = 200;
       let page = 1;
       let anyStored = 0;
       const allPotential = [];
       const allMatched = [];
 
-      const messages = ['Keep going!', 'Consistency is key.', 'Finish strong!', 'Habit is everything.'];
+      const messages = ['Syncing with Strava...', 'Checking for new activities...', 'Updating your training log...', 'Persistent metrics incoming...'];
       let msgIdx = 0;
 
       const msgInterval = setInterval(() => {
         msgIdx = (msgIdx + 1) % messages.length;
         setCurrentMessage(messages[msgIdx]);
-      }, 4000);
+      }, 3000);
 
       while (true) {
         setCurrentPageIdx(page);
@@ -164,18 +179,23 @@ function Activities() {
 
         const res = await storeActivitiesInFirebase(athleteId, pageActivities, userSettings);
         anyStored += (res && res.count) ? res.count : pageActivities.length;
+        
+        // Match with planned workouts
         const matches = await autoMatchActivities(athleteId, pageActivities);
         if (matches.matched && matches.matched.length > 0) allMatched.push(...matches.matched);
         if (matches.potential && matches.potential.length > 0) allPotential.push(...matches.potential);
 
         setProcessedCount(anyStored);
-        setProgressPercent(Math.min(95, page * 5));
+        setProgressPercent(Math.min(95, page * 10));
         if (pageActivities.length < perPage) break;
         page += 1;
       }
 
+      clearInterval(msgInterval);
+      setProgressPercent(100);
+
+      // Show potential match suggestions if any
       if (allPotential.length > 0) {
-        // Build map: workout.id -> { workout, activities: [...] }
         const workoutMap = new Map();
         allPotential.forEach(({ activity, potentialWorkouts }) => {
           potentialWorkouts.forEach(workout => {
@@ -189,26 +209,31 @@ function Activities() {
         setShowMatchModal(true);
       }
 
-      let statusMsg = `✓ Stored ${anyStored} new activities.`;
-      if (allMatched.length > 0) statusMsg += ` ${allMatched.length} matched to plan.`;
-      setSyncStatus(statusMsg);
-
-      clearInterval(msgInterval);
-      setProgressPercent(100);
-      if (anyStored > 0) {
-        const refreshed = await getActivitiesFromFirebase(athleteId, displayLimit, null, filterType);
+      // Success notification
+      if (anyStored > 0 || isManual) {
+        let statusMsg = anyStored > 0 ? `✓ Synced ${anyStored} new activities.` : 'Already up to date.';
+        if (allMatched.length > 0) statusMsg += ` ${allMatched.length} matched to plan.`;
+        setSyncStatus(statusMsg);
+        
+        // Reload from Firebase (The Source of Truth)
+        let refreshed = await getActivitiesFromFirebase(athleteId, 500, null, filterType);
+        if (filterType === '') {
+          refreshed = refreshed.filter(a => a.type !== 'Walk');
+        }
         setActivities(refreshed);
+        calculateStats(refreshed);
         if (refreshed && refreshed.length > 0) {
           setLastStartDateCursor(refreshed[refreshed.length - 1].start_date || refreshed[refreshed.length - 1].start_date_local || null);
         }
-      } else {
-        setSyncStatus(null);
       }
+
     } catch (err) {
-      console.error('Auto-sync background error:', err);
-      setSyncStatus('Auto-sync failed');
+      console.error('Strava Sync Error:', err);
+      setSyncStatus('Sync failed');
     } finally {
       setSyncing(false);
+      setLoading(false);
+      setTimeout(() => setSyncStatus(null), 3000);
     }
   };
 
@@ -220,52 +245,27 @@ function Activities() {
         navigate('/');
         return;
       }
-      const docs = await getActivitiesFromFirebase(String(authData.athlete.id), displayLimit, null, filterType);
+      // Fetch 500 to ensure we have current and prev month for stats
+      let docs = await getActivitiesFromFirebase(String(authData.athlete.id), 500, null, filterType);
+      if (filterType === '') {
+        docs = docs.filter(a => a.type !== 'Walk');
+      }
       setActivities(docs);
-      setSyncStatus(`Loaded ${docs.length} activities`);
+      calculateStats(docs);
+      if (docs && docs.length > 0) {
+        setLastStartDateCursor(docs[docs.length - 1].start_date || docs[docs.length - 1].start_date_local || null);
+      }
     } catch (err) {
       setError('Load failed.');
     } finally {
       setLoading(false);
-      setTimeout(() => setSyncStatus(null), 2000);
     }
   };
 
-  const handleSyncToFirebase = async () => {
-    try {
-      const authData = getStoredAuthData();
-      if (!authData?.athlete?.id) return;
-      setLoading(true);
-      const athleteId = String(authData.athlete.id);
-      const userSettings = await getAthleteSettings(athleteId);
-      const result = await storeActivitiesInFirebase(athleteId, activities, userSettings);
-      const matches = await autoMatchActivities(athleteId, activities);
-
-      let statusMsg = `✓ Cloud Push Complete.`;
-      if (matches.matched && matches.matched.length > 0) statusMsg += ` ${matches.matched.length} matched.`;
-      if (matches.potential && matches.potential.length > 0) {
-        // Build map: workout.id -> { workout, activities: [...] }
-        const workoutMap = new Map();
-        matches.potential.forEach(({ activity, potentialWorkouts }) => {
-          potentialWorkouts.forEach(workout => {
-            if (!workoutMap.has(workout.id)) {
-              workoutMap.set(workout.id, { workout, activities: [] });
-            }
-            workoutMap.get(workout.id).activities.push(activity);
-          });
-        });
-        setAvailableWorkoutsMap(workoutMap);
-        setShowMatchModal(true);
-        statusMsg += ` ${workoutMap.size} suggestions.`;
-      }
-      setSyncStatus(statusMsg);
-    } catch (e) {
-      setSyncStatus('Sync failed');
-    } finally {
-      setLoading(false);
-      setTimeout(() => setSyncStatus(null), 3000);
-    }
-  };
+  const [processingManualMatch, setProcessingManualMatch] = useState(false);
+  const [showMatchModal, setShowMatchModal] = useState(false);
+  // Map of workout.id -> { workout, activity }
+  const [availableWorkoutsMap, setAvailableWorkoutsMap] = useState(new Map());
 
   const formatDistance = (meters) => `${(meters / 1000).toFixed(2)} km`;
   const formatDuration = (seconds) => {
@@ -283,7 +283,10 @@ function Activities() {
       setIsLoadingMore(true);
       const authData = getStoredAuthData();
       if (!authData?.athlete?.id) return;
-      const next = await getActivitiesFromFirebase(String(authData.athlete.id), 20, lastStartDateCursor, filterType);
+      let next = await getActivitiesFromFirebase(String(authData.athlete.id), 20, lastStartDateCursor, filterType);
+      if (filterType === '') {
+        next = next.filter(a => a.type !== 'Walk');
+      }
       if (next && next.length > 0) {
         setActivities((prev) => prev.concat(next));
         setLastStartDateCursor(next[next.length - 1].start_date || next[next.length - 1].start_date_local || null);
@@ -300,9 +303,12 @@ function Activities() {
 
   useEffect(() => {
     loadActivitiesFromFirebase().then(() => {
-      autoSyncOnMount().catch(() => { });
+      // Only sync automatically on the first load (when filter is empty)
+      if (!filterType) {
+        syncWithStrava(false).catch(() => { });
+      }
     });
-  }, []);
+  }, [filterType]);
 
   useEffect(() => {
     const onScroll = () => {
@@ -315,38 +321,59 @@ function Activities() {
   }, [isLoadingMore, syncing, loading, hasMore, lastStartDateCursor, filterType]);
 
   const getActivityIcon = (type) => {
-    const icons = {
-      Run: <IconRun size={24} />,
-      Ride: <IconBike size={24} />,
-      Swim: <IconSwimming size={24} />,
-      Walk: <IconWalk size={24} />,
-      Hike: <IconMountain size={24} />,
-      Workout: <IconBarbell size={24} />
-    };
-    return icons[type] || <IconRun size={24} />;
+    const typeLower = type.toLowerCase();
+    
+    if (typeLower.includes('run')) return <IconRun size={24} />;
+    if (typeLower.includes('ride') || typeLower.includes('bike') || typeLower.includes('cycle')) return <IconBike size={24} />;
+    if (typeLower.includes('swim')) return <IconSwimming size={24} />;
+    if (typeLower.includes('walk')) return <IconWalk size={24} />;
+    if (typeLower.includes('hike') || typeLower.includes('mountain')) return <IconMountain size={24} />;
+    if (typeLower.includes('workout') || typeLower.includes('weight') || typeLower.includes('strength')) return <IconBarbell size={24} />;
+    
+    return <IconRun size={24} />;
   };
+
+  const groupedByMonth = activities.reduce((acc, activity) => {
+    const date = new Date(activity.start_date);
+    const monthKey = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+    if (!acc[monthKey]) acc[monthKey] = [];
+    acc[monthKey].push(activity);
+    return acc;
+  }, {});
 
   return (
     <Stack gap="xl">
       <Group justify="space-between" align="center">
         <Title order={1}>Activities</Title>
         <Group>
-          <Button onClick={loadActivities} variant="subtle" size="sm" leftSection={<IconRefresh size={16} />} loading={loading}>Sync Strava</Button>
-          <Button onClick={handleSyncToFirebase} variant="light" size="sm" leftSection={<IconCloudUpload size={16} />}>Cloud Push</Button>
-          <Select
-            placeholder="Type"
-            data={['Run', 'Ride', 'Swim', 'Walk', 'Hike', 'Workout']}
+          <Button 
+            onClick={() => syncWithStrava(true)} 
+            variant="light" 
+            size="sm" 
+            leftSection={<IconRefresh size={16} />} 
+            loading={loading}
+          >
+            Sync with Strava
+          </Button>
+          <SegmentedControl
             value={filterType}
-            leftSection={<IconFilter size={14} />}
             onChange={(v) => {
               setFilterType(v);
               setActivities([]);
               setLastStartDateCursor(null);
               setHasMore(true);
-              setLoading(true);
             }}
-            clearable
-            style={{ width: rem(130) }}
+            data={[
+              { label: 'All', value: '' },
+              { label: 'Run', value: 'Run' },
+              { label: 'Ride', value: 'Ride' },
+              { label: 'Swim', value: 'Swim' },
+              { label: 'Walk', value: 'Walk' },
+              { label: 'Hike', value: 'Hike' },
+              { label: 'Workout', value: 'Workout' },
+            ]}
+            size="sm"
+            radius="md"
           />
         </Group>
       </Group>
@@ -355,6 +382,37 @@ function Activities() {
         <Paper withBorder p="xs" radius="md" bg="midnight.9">
           <Text size="sm" ta="center" fw={500} c="blue">{syncStatus}</Text>
         </Paper>
+      )}
+
+      {/* Stats Overview Section */}
+      {!loading && activities.length > 0 && (
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="lg">
+          <MetricCard
+            title={`${monthlyStats.current.monthName} Activities`}
+            value={String(monthlyStats.current.count)}
+            description={formatTrend(monthlyStats.current.count, monthlyStats.previous.count, ' act')}
+          />
+          <MetricCard
+            title={`${monthlyStats.current.monthName} Distance`}
+            value={formatDistance(monthlyStats.current.distance).split(' ')[0]}
+            unit="km"
+            color="green"
+            description={formatTrend(monthlyStats.current.distance, monthlyStats.previous.distance, 'km', true)}
+          />
+          <MetricCard
+            title={`${monthlyStats.current.monthName} Time`}
+            value={formatDuration(monthlyStats.current.time)}
+            color="orange"
+            description={formatDurationTrend(monthlyStats.current.time, monthlyStats.previous.time)}
+          />
+          <MetricCard
+            title={`${monthlyStats.current.monthName} Elevation`}
+            value={String(Math.round(monthlyStats.current.elevation))}
+            unit="m"
+            color="cyan"
+            description={formatTrend(monthlyStats.current.elevation, monthlyStats.previous.elevation, 'm')}
+          />
+        </SimpleGrid>
       )}
 
       <Modal
@@ -373,67 +431,105 @@ function Activities() {
       </Modal>
 
       {loading && activities.length === 0 ? (
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <Skeleton key={i} h={180} radius="md" />
+        <Stack gap="md">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} h={100} radius="md" />
           ))}
-        </SimpleGrid>
+        </Stack>
       ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
-          {activities.map((activity) => (
-            <Card
-              key={activity.id}
-              className="activity-card"
-              padding="lg"
-              radius="lg"
-              withBorder
-              onClick={() => navigate(`/activities/${activity.id}`)}
-              style={{
-                cursor: 'pointer',
-                background: 'var(--mantine-color-midnight-9)',
-                transition: 'transform 0.2s ease, border-color 0.2s ease'
-              }}
-            >
-              <Group justify="space-between" mb="md">
-                <Box c="blue.4">
-                  {getActivityIcon(activity.type)}
-                </Box>
-                <Tooltip label={activity.start_date_local || activity.start_date}>
-                  <Text size="xs" c="dimmed" fw={700}>{formatDate(activity.start_date)}</Text>
-                </Tooltip>
-              </Group>
+        <Stack gap="xl">
+          {Object.entries(groupedByMonth).map(([month, monthActivities]) => (
+            <Box key={month}>
+              <Title order={4} mb="md" c="dimmed" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Divider style={{ flex: 1 }} />
+                {month}
+                <Divider style={{ flex: 1 }} />
+              </Title>
+              <Stack gap="sm">
+                {monthActivities.map((activity) => (
+                  <Paper
+                    key={activity.id}
+                    className="activity-item"
+                    p="md"
+                    radius="md"
+                    withBorder
+                    onClick={() => navigate(`/activities/${activity.id}`)}
+                    style={{
+                      cursor: 'pointer',
+                      background: 'var(--mantine-color-midnight-9)',
+                      transition: 'all 0.2s ease',
+                      '&:hover': {
+                        borderColor: 'var(--mantine-color-blue-4)',
+                        transform: 'translateX(5px)',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+                      }
+                    }}
+                  >
+                    <Grid columns={12} gutter="md" align="center">
+                      <Grid.Col span={{ base: 12, sm: 1 }}>
+                        <Box 
+                          p="sm" 
+                          bg="rgba(33, 150, 243, 0.1)" 
+                          style={{ borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
+                          c="blue.4"
+                        >
+                          {getActivityIcon(activity.type)}
+                        </Box>
+                      </Grid.Col>
 
-              <Text fw={900} mb="xs" lineClamp={1} size="lg">{activity.name}</Text>
+                      <Grid.Col span={{ base: 12, sm: 4 }}>
+                        <Stack gap={2}>
+                          <Text fw={700} size="md" lineClamp={1}>{activity.name}</Text>
+                          <Text size="xs" c="dimmed">{formatDate(activity.start_date)}</Text>
+                        </Stack>
+                      </Grid.Col>
 
-              <SimpleGrid cols={2} gap="sm" mb="md">
-                <Box>
-                  <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Distance</Text>
-                  <Text fw={600}>{formatDistance(activity.distance)}</Text>
-                </Box>
-                <Box>
-                  <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Time</Text>
-                  <Text fw={600}>{formatDuration(activity.moving_time)}</Text>
-                </Box>
-              </SimpleGrid>
+                      <Grid.Col span={{ base: 12, sm: 5 }}>
+                        <Group gap={rem(20)} justify="space-around" wrap="nowrap">
+                          <Box style={{ minWidth: rem(60) }}>
+                            <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Distance</Text>
+                            <Text fw={600} size="sm">{formatDistance(activity.distance)}</Text>
+                          </Box>
+                          <Box style={{ minWidth: rem(60) }}>
+                            <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Time</Text>
+                            <Text fw={600} size="sm">{formatDuration(activity.moving_time)}</Text>
+                          </Box>
+                          {activity.average_heartrate && (
+                            <Box style={{ minWidth: rem(60) }} visibleFrom="md">
+                              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Avg HR</Text>
+                              <Text fw={600} size="sm">{Math.round(activity.average_heartrate)} bpm</Text>
+                            </Box>
+                          )}
+                          {(activity.weighted_average_power || activity.average_watts) && (
+                            <Box style={{ minWidth: rem(60) }} visibleFrom="md">
+                              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Avg Power</Text>
+                              <Text fw={600} size="sm">{Math.round(activity.weighted_average_power || activity.average_watts)} W</Text>
+                            </Box>
+                          )}
+                        </Group>
+                      </Grid.Col>
 
-              <Group gap="xs">
-                {activity.total_elevation_gain > 0 && (
-                  <Badge variant="light" color="green" size="sm" leftSection={<IconMountain size={12} />}>
-                    {Math.round(activity.total_elevation_gain)}m
-                  </Badge>
-                )}
-                {activity.achievement_count > 0 && (
-                  <Badge variant="light" color="yellow" size="sm" leftSection={<IconTrophy size={12} />}>
-                    {activity.achievement_count}
-                  </Badge>
-                )}
-                {activity.tss && (
-                  <Badge variant="filled" color="blue" size="sm" fw={900}>TSS {activity.tss}</Badge>
-                )}
-              </Group>
-            </Card>
+                      <Grid.Col span={{ base: 12, sm: 2 }}>
+                        <Box style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', minHeight: '32px' }}>
+                          <Group gap="xs">
+                            {activity.achievement_count > 0 && (
+                              <Badge variant="light" color="yellow" size="sm" circle>
+                                {activity.achievement_count}
+                              </Badge>
+                            )}
+                            {activity.tss && (
+                              <Badge variant="filled" color="blue" size="sm" radius="sm">TSS {activity.tss}</Badge>
+                            )}
+                          </Group>
+                        </Box>
+                      </Grid.Col>
+                    </Grid>
+                  </Paper>
+                ))}
+              </Stack>
+            </Box>
           ))}
-        </SimpleGrid>
+        </Stack>
       )}
 
       {error && (

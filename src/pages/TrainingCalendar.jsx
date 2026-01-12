@@ -109,6 +109,8 @@ function TrainingCalendar() {
             value={selectedDate}
             tileClassName={({ date, view }) => (view === 'month' && activitiesByDate[date.toDateString()] ? 'has-activities' : null)}
             className="custom-intelligence-calendar"
+            calendarType="ISO 8601"
+            locale="en-GB"
           />
           <Group mt="lg" gap="xs">
             <Box w={8} h={8} bg="blue.6" style={{ borderRadius: '50%' }} />

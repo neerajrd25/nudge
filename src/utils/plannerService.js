@@ -72,6 +72,7 @@ export const savePlannedWorkout = async (athleteId, workout) => {
       if (!workout.raceType) updateData.raceType = deleteField();
       if (!workout.details) updateData.details = deleteField();
       if (!workout.focus) updateData.focus = deleteField();
+      if (workout.plannedDistance === null || workout.plannedDistance === undefined || workout.plannedDistance === '') updateData.plannedDistance = deleteField();
 
       await updateDoc(docRef, updateData);
       return { id: workout.id, success: true };

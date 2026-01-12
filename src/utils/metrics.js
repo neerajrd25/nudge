@@ -149,3 +149,87 @@ export const calculatePMC = (activities, settings = DEFAULT_SETTINGS, initialVal
 
   return pmcData;
 };
+
+/**
+ * Calculate readiness score based on training load and recovery indicators
+ * Returns a score from 0-100 where higher is better readiness
+ * @param {Array} activities - Array of activity objects
+ * @param {Object} settings - Athlete settings
+ * @returns {Object} Readiness score data with score, label, and color
+ */
+export const calculateReadinessScore = (activities, settings = DEFAULT_SETTINGS) => {
+  if (!activities || activities.length === 0) {
+    return { score: 50, label: 'Unknown', color: 'gray' };
+  }
+
+  // Get PMC data for the last 30 days
+  const pmcData = calculatePMC(activities, settings);
+  if (pmcData.length === 0) {
+    return { score: 50, label: 'Unknown', color: 'gray' };
+  }
+
+  // Get the most recent TSB value
+  const latestPMC = pmcData[pmcData.length - 1];
+  const currentTSB = latestPMC.tsb;
+
+  // Base score on TSB (normalized to 0-100 scale)
+  // TSB range: typically -30 to +30, we'll map this to readiness
+  let readinessScore = 50 + (currentTSB * 1.5); // 50 is neutral, ±30 TSB gives ±45 points
+  readinessScore = Math.max(0, Math.min(100, readinessScore)); // Clamp to 0-100
+
+  // Factor in recent activity intensity (last 3 days)
+  const recentActivities = activities
+    .filter(activity => {
+      const activityDate = new Date(activity.start_date);
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+      return activityDate >= threeDaysAgo;
+    })
+    .sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+
+  // If had high intensity workout recently, slightly reduce readiness
+  const highIntensityThreshold = 150; // TSS threshold for "high intensity"
+  const recentHighIntensity = recentActivities.some(activity =>
+    (activity.tss || calculateTSS(activity, settings)) > highIntensityThreshold
+  );
+
+  if (recentHighIntensity) {
+    readinessScore = Math.max(0, readinessScore - 10); // Reduce by 10 points
+  }
+
+  // Factor in rest days - if last activity was >2 days ago, boost readiness slightly
+  const lastActivityDate = recentActivities.length > 0 ?
+    new Date(recentActivities[0].start_date) : new Date();
+  const daysSinceLastActivity = (new Date() - lastActivityDate) / (1000 * 60 * 60 * 24);
+
+  if (daysSinceLastActivity > 2) {
+    readinessScore = Math.min(100, readinessScore + 5); // Boost by 5 points for rest
+  }
+
+  // Determine label and color based on score
+  let label, color;
+  if (readinessScore >= 80) {
+    label = 'Peak Ready';
+    color = 'green';
+  } else if (readinessScore >= 65) {
+    label = 'Good Recovery';
+    color = 'blue';
+  } else if (readinessScore >= 50) {
+    label = 'Maintaining';
+    color = 'yellow';
+  } else if (readinessScore >= 35) {
+    label = 'Fatigued';
+    color = 'orange';
+  } else {
+    label = 'Overtrained';
+    color = 'red';
+  }
+
+  return {
+    score: Math.round(readinessScore),
+    label,
+    color,
+    tsb: currentTSB,
+    daysSinceLastActivity: Math.round(daysSinceLastActivity * 10) / 10
+  };
+};
