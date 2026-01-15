@@ -744,8 +744,8 @@ const Planner = ({ initialDate = new Date() }) => {
                           await savePlannedWorkout(athleteId, {
                             ...item,
                             status: item.status === 'done' ? 'pending' : 'done',
-                            actualDuration: item.status === 'done' ? 0 : item.plannedDuration,
-                            actualActivity: item.status === 'done' ? '' : 'Manually Completed',
+                            actualDuration: item.status === 'done' ? undefined : item.plannedDuration,
+                            actualActivity: item.status === 'done' ? undefined : 'Manually Completed',
                             completionSource: item.status === 'done' ? undefined : 'manual'
                           });
                           const updated = await getPlannedWorkouts(athleteId,
