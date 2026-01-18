@@ -30,7 +30,8 @@ import {
   IconShieldLock,
   IconLogout,
   IconUser,
-  IconSmartHome
+  IconSmartHome,
+  IconChartLine
 } from '@tabler/icons-react';
 import { getStoredAuthData, clearAuthData } from '../../utils/stravaApi';
 
@@ -57,6 +58,7 @@ export function AppLayout({ children }) {
     { label: 'Activities', icon: IconActivity, path: '/activities' },
     { label: 'Training Plan', icon: IconCalendar, path: '/planner' },
     { label: 'AI Coach', icon: IconMessageChatbot, path: '/chat' },
+    { label: 'Fitness Charts', icon: IconChartLine, path: '/charts' },
     { label: 'Performance PRs', icon: IconTrophy, path: '/prs' },
     { label: 'Year Analytics', icon: IconChartBar, path: '/year-stats' },
   ];

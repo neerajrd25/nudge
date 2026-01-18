@@ -11,6 +11,7 @@ import YearStats from './pages/YearStats';
 import Planner from './pages/Planner';
 import PlannerDemo from './pages/PlannerDemo';
 import AthleteSettings from './pages/AthleteSettings';
+import Charts from './pages/Charts';
 import { AppLayout } from './components/layout/AppLayout';
 import './App.css';
 
@@ -31,6 +32,7 @@ function App() {
                 <Route path="/planner" element={<Planner />} />
                 <Route path="/planner-demo" element={<PlannerDemo />} />
                 <Route path="/chat" element={<Chat />} />
+                <Route path="/charts" element={<Charts />} />
                 <Route path="/prs" element={<PersonalRecords />} />
                 <Route path="/admin" element={<AdminPanel />} />
                 <Route path="/year-stats" element={<YearStats />} />
