@@ -1,4 +1,4 @@
-# 🏃 Nudge - AI-Powered Training Planner
+# 🏃 Momentum.IQ - AI-Powered Training Planner
 
 A React-based web application that integrates with Strava to help athletes plan and track their training. The app provides activity tracking, training calendar visualization, and AI-powered insights.
 
@@ -119,7 +119,7 @@ The app will be available at `http://localhost:5173`
 ## Usage
 
 1. **Connect to Strava**: Click the "Connect with Strava" button on the home page
-2. **Authorize**: Allow Nudge to access your Strava data
+2. **Authorize**: Allow Momentum.IQ to access your Strava data
 3. **View Activities**: Navigate to the Activities page to see your recent workouts
 4. **Training Calendar**: Check out the Calendar page to visualize your training schedule
 5. **AI Chat**: Use the Chat page to discuss your training with AI (requires Ollama)

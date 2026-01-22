@@ -80,7 +80,7 @@ const Charts = () => {
         pixelRatio: 2,
         backgroundColor: '#0a0a0a', // Match midnight theme
       });
-      
+
       const link = document.createElement('a');
       link.download = `fitness-viz-${new Date().toISOString().split('T')[0]}.png`;
       link.href = dataUrl;
@@ -704,8 +704,8 @@ const Charts = () => {
 
         {/* Technical Alert */}
         <Alert color="blue" radius="lg" variant="light" title="Intelligence: Grade-Adjusted Pace">
-          <Text size="sm">
-            NUDGE.IQ uses GAP to normalize your pace against gravity. By adjusting for elevation changes, 
+            <Text size="sm">
+            Momentum.IQ uses GAP to normalize your pace against gravity. By adjusting for elevation changes, 
             we can accurately track your aerobic efficiency regardless of the terrain. A declining GAP 
             at the same Heart Rate indicates physiological adaptation and improved fitness.
           </Text>

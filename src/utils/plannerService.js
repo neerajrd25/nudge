@@ -25,10 +25,18 @@ export const getPlannedWorkouts = async (athleteId, startDate, endDate) => {
   try {
     await ensureAuthenticated();
     const plannedRef = collection(db, 'athletes', String(athleteId), 'planned_workouts');
+    const formatDate = (date) => {
+      const d = new Date(date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     const q = query(
       plannedRef,
-      where('date', '>=', startDate.toISOString().split('T')[0]),
-      where('date', '<=', endDate.toISOString().split('T')[0]),
+      where('date', '>=', formatDate(startDate)),
+      where('date', '<=', formatDate(endDate)),
       orderBy('date', 'asc')
     );
 

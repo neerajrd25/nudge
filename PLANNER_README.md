@@ -296,4 +296,4 @@ Check viewport meta tag in `index.html`:
 
 ## License
 
-Part of the Nudge training app.
+Part of the Momentum.IQ training app.

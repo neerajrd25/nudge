@@ -32,7 +32,13 @@ import { getStoredAuthData, refreshAccessToken, storeAuthData, isTokenExpired, g
 import { getStravaStatsFromFirebase, storeStravaStatsInFirebase } from '../utils/firebaseService';
 
 function PersonalRecords() {
-  const [athleteStats, setAthleteStats] = useState(null);
+  const EMPTY_STATS = {
+    all_ride_totals: { distance: 0, moving_time: 0, elevation_gain: 0, count: 0, max_distance: 0 },
+    all_run_totals: { distance: 0, moving_time: 0, elevation_gain: 0, count: 0, max_distance: 0 },
+    all_swim_totals: { distance: 0, moving_time: 0, elevation_gain: 0, count: 0, max_distance: 0 },
+  };
+
+  const [athleteStats, setAthleteStats] = useState(EMPTY_STATS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
@@ -61,7 +67,7 @@ function PersonalRecords() {
         stats = await getAthleteStats(accessToken, authData.athlete.id);
         await storeStravaStatsInFirebase(authData.athlete.id, stats);
       }
-      setAthleteStats(stats);
+      setAthleteStats(stats || EMPTY_STATS);
     } catch (err) {
       setError('Failed to load fitness stats.');
     } finally {

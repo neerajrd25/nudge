@@ -24,7 +24,7 @@ import { getPlannedWorkouts, savePlannedWorkout, importPlannedWorkouts, deletePl
 import { getActivitiesByDateRange } from '../utils/firebaseService';
 import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink } from '@tabler/icons-react';
 import { getStoredAuthData, getAthleteActivities, isTokenExpired, refreshAccessToken, storeAuthData } from '../utils/stravaApi';
-import { calculateTSS } from '../utils/metrics';
+import { calculateTSS, getActivityType, estimatePlannedTSS } from '../utils/metrics';
 
 const ACTIVITY_CONFIG = {
   run: { color: 'red.7', icon: <IconRun size={14} />, gradient: 'linear-gradient(45deg, #FF6B6B 0%, #D6336C 100%)' },
@@ -44,28 +44,6 @@ function groupByDate(items) {
   }, {});
 }
 
-function getActivityType(item) {
-  const rawType = (item.activityType || '').toLowerCase();
-  if (rawType === 'run') return 'run';
-  if (rawType === 'ride' || rawType === 'cycle' || rawType === 'ebikeride' || rawType === 'virtualride') return 'cycle';
-  if (rawType === 'swim') return 'swim';
-  if (rawType === 'weighttraining' || rawType === 'strength') return 'strength';
-  if (rawType === 'yoga' || rawType === 'mobility') return 'mobility';
-
-  if (item.activityType) return item.activityType.toLowerCase();
-
-  const name = (item.plannedActivity || '').toLowerCase();
-  const details = (item.details || '').toLowerCase();
-  const combined = `${name} ${details}`;
-  if (combined.includes('run')) return 'run';
-  if (combined.includes('ride') || combined.includes('cycle') || combined.includes('spin') || combined.includes('bike')) return 'cycle';
-  if (combined.includes('swim')) return 'swim';
-  if (combined.includes('strength') || combined.includes('gym') || combined.includes('lift') || combined.includes('weight')) return 'strength';
-  if (combined.includes('mobility') || combined.includes('rehab') || combined.includes('yoga') || combined.includes('stretch')) return 'mobility';
-  if (combined.includes('rest')) return 'rest';
-  if (combined.includes('workout')) return 'workout';
-  return 'run'; // Default
-}
 
 function getStatusColor(status, raceType, item) {
   if (status === 'done') return 'green.7';
@@ -109,66 +87,43 @@ function getWeeksInMonth(date) {
   return weeks;
 }
 
-function estimatePlannedTSS(item) {
-  const durationHours = (item.plannedDuration || 0) / 60;
-  const activityType = getActivityType(item);
-  
-  // Base TSS per hour based on activity type and intensity
-  let baseTSSPerHour = 50; // Default moderate intensity
-  
-  if (activityType === 'run') {
-    // Check for intensity indicators in activity name or details
-    const nameAndDetails = `${item.plannedActivity} ${item.details || ''}`.toLowerCase();
-    if (nameAndDetails.includes('easy') || nameAndDetails.includes('recovery')) {
-      baseTSSPerHour = 30;
-    } else if (nameAndDetails.includes('tempo') || nameAndDetails.includes('steady') || nameAndDetails.includes('threshold')) {
-      baseTSSPerHour = 70;
-    } else if (nameAndDetails.includes('interval') || nameAndDetails.includes('speed') || nameAndDetails.includes('vo2')) {
-      baseTSSPerHour = 90;
-    } else if (nameAndDetails.includes('race') || nameAndDetails.includes('competition')) {
-      baseTSSPerHour = 100;
-    }
-  } else if (activityType === 'cycle') {
-    const nameAndDetails = `${item.plannedActivity} ${item.details || ''}`.toLowerCase();
-    if (nameAndDetails.includes('easy') || nameAndDetails.includes('recovery')) {
-      baseTSSPerHour = 40;
-    } else if (nameAndDetails.includes('tempo') || nameAndDetails.includes('steady')) {
-      baseTSSPerHour = 60;
-    } else if (nameAndDetails.includes('interval') || nameAndDetails.includes('vo2')) {
-      baseTSSPerHour = 80;
-    } else if (nameAndDetails.includes('race') || nameAndDetails.includes('competition')) {
-      baseTSSPerHour = 120;
-    }
-  } else if (activityType === 'strength' || activityType === 'workout') {
-    baseTSSPerHour = 40; // Strength training has lower TSS
-  } else if (activityType === 'rest' || activityType === 'mobility') {
-    baseTSSPerHour = 10; // Very low TSS for recovery activities
-  }
-  
-  return Math.round(durationHours * baseTSSPerHour);
-}
-
 function getWeekTotals(week, itemsByDate) {
   let plannedMinutes = 0, actualMinutes = 0, completed = 0, total = 0, plannedTSS = 0, actualTSS = 0;
+
+  // Track Strava IDs to prevent double counting in TSS/Duration
+  const processedStravaIds = new Set();
+  const processedPlannedWorkouts = new Set();
+
   week.forEach(day => {
     if (!day) return;
     const items = itemsByDate[formatDateKey(day)] || [];
+
     items.forEach(item => {
-      plannedMinutes += item.plannedDuration || 0;
-      actualMinutes += item.actualDuration || 0;
-      total++;
-      if (item.status === 'done') completed++;
-      
-      // Calculate TSS
+      // 1. Logic for Actual Activities (from Strava)
       if (item.isActual) {
-        // For actual activities, use the calculateTSS function
-        actualTSS += item.tss || calculateTSS(item, null) || 0;
-      } else {
-        // For planned activities, estimate TSS based on duration and activity type
-        const estimatedTSS = estimatePlannedTSS(item);
-        plannedTSS += estimatedTSS;
-        if (item.status === 'done') {
-          actualTSS += estimatedTSS; // Use estimated TSS for completed planned activities
+        const stravaId = item.id.replace('strava-', '');
+        if (!processedStravaIds.has(stravaId)) {
+          actualMinutes += item.actualDuration || 0;
+          actualTSS += item.tss || calculateTSS(item, null) || 0;
+          processedStravaIds.add(stravaId);
+        }
+        return;
+      }
+
+      // 2. Logic for Planned Workouts
+      total++;
+      plannedMinutes += item.plannedDuration || 0;
+
+      const estTSS = estimatePlannedTSS(item);
+      plannedTSS += estTSS;
+
+      if (item.status === 'done') {
+        completed++;
+        // If it's linked to an actual Strava activity, we skip its contribution to "actualTSS" 
+        // here because it's already accounted for in the isActual check above (to prevent double counting)
+        if (!item.stravaActivityId) {
+          actualMinutes += item.actualDuration || item.plannedDuration || 0;
+          actualTSS += item.actualTss || estTSS;
         }
       }
     });
@@ -195,6 +150,7 @@ const Planner = ({ initialDate = new Date() }) => {
     focus: '',
     raceType: '',
     activityType: 'run',
+    plannedTss: '',
   });
 
   const authData = getStoredAuthData();
@@ -208,12 +164,18 @@ const Planner = ({ initialDate = new Date() }) => {
         const startOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
         const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
 
+        // Fetch with a buffer to handle weeks crossing month boundaries
+        const fetchStart = new Date(startOfMonth);
+        fetchStart.setDate(fetchStart.getDate() - 7);
+        const fetchEnd = new Date(endOfMonth);
+        fetchEnd.setDate(fetchEnd.getDate() + 7);
+
         // Fetch Planned
-        const planned = await getPlannedWorkouts(athleteId, startOfMonth, endOfMonth);
+        const planned = await getPlannedWorkouts(athleteId, fetchStart, fetchEnd);
         setPlannerItems(planned);
 
         // Fetch Actual from Firebase
-        const strava = await getActivitiesByDateRange(athleteId, startOfMonth, endOfMonth);
+        const strava = await getActivitiesByDateRange(athleteId, fetchStart, fetchEnd);
         const transformed = strava.map(act => ({
           id: `strava-${act.id}`,
           plannedActivity: act.name,
@@ -223,7 +185,8 @@ const Planner = ({ initialDate = new Date() }) => {
           details: `${((act.distance || 0) / 1000).toFixed(2)}km • ${act.type}`,
           status: 'done',
           isActual: true,
-          activityType: (act.sport_type || act.type || '').toLowerCase()
+          activityType: (act.sport_type || act.type || '').toLowerCase(),
+          tss: act.tss, // Include TSS from Strava
         }));
         setActualActivities(transformed);
       } catch (error) { console.error(error); }
@@ -270,7 +233,8 @@ const Planner = ({ initialDate = new Date() }) => {
           details: '',
           focus: '',
           raceType: '',
-          activityType: 'run'
+          activityType: 'run',
+          plannedTss: ''
         });
       }
     } catch (e) { console.error(e); }
@@ -344,6 +308,7 @@ const Planner = ({ initialDate = new Date() }) => {
       focus: item.focus || '',
       raceType: item.raceType || '',
       activityType: getActivityType(item),
+      plannedTss: item.plannedTss || '',
     });
     setShowAddForm(true);
     setSelectedDate(null);
@@ -779,7 +744,8 @@ const Planner = ({ initialDate = new Date() }) => {
               details: '',
               focus: '',
               raceType: '',
-              activityType: 'run'
+              activityType: 'run',
+              plannedTss: ''
             });
             setShowAddForm(true);
             setSelectedDate(null);
@@ -824,15 +790,24 @@ const Planner = ({ initialDate = new Date() }) => {
             min={1}
             required
           />
-          <NumberInput
-            label="Distance (km)"
-            placeholder="Optional"
-            value={newWorkout.plannedDistance}
-            onChange={(val) => setNewWorkout({ ...newWorkout, plannedDistance: val })}
-            min={0}
-            step={0.1}
-            decimalScale={2}
-          />
+          <SimpleGrid cols={2}>
+            <NumberInput
+              label="Distance (km)"
+              placeholder="Optional"
+              value={newWorkout.plannedDistance}
+              onChange={(val) => setNewWorkout({ ...newWorkout, plannedDistance: val })}
+              min={0}
+              step={0.1}
+              decimalScale={2}
+            />
+            <NumberInput
+              label="Planned TSS"
+              placeholder="Load estimate"
+              value={newWorkout.plannedTss}
+              onChange={(val) => setNewWorkout({ ...newWorkout, plannedTss: val })}
+              min={0}
+            />
+          </SimpleGrid>
           <TextInput
             label="Date"
             type="date"

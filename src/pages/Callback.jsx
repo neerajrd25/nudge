@@ -30,6 +30,8 @@ function Callback() {
       try {
         const data = await exchangeToken(code);
         storeAuthData(data);
+        // notify app that auth changed so layouts/pages can refresh state
+        window.dispatchEvent(new Event('authChanged'));
         setStatus('success');
         setTimeout(() => navigate('/'), 1500);
       } catch (err) {
@@ -63,7 +65,7 @@ function Callback() {
               </ThemeIcon>
               <Stack gap={4} align="center">
                 <Title order={2}>Sync Successful</Title>
-                <Text c="dimmed" ta="center">Welcome to NUDGE.IQ. Redirecting to your dashboard...</Text>
+                <Text c="dimmed" ta="center">Welcome to Momentum.IQ. Redirecting to your dashboard...</Text>
               </Stack>
             </>
           )}
