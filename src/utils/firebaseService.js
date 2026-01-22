@@ -7,9 +7,13 @@ import {
   query, 
   where,
   orderBy,
-  Timestamp 
+  Timestamp,
+  startAfter as firestoreStartAfter,
+  limit as firestoreLimit,
 } from 'firebase/firestore';
+import { deleteDoc } from 'firebase/firestore';
 import { db, ensureAuthenticated } from './firebaseConfig';
+import { calculateTSS } from './metrics';
 
 /**
  * Store Strava activities in Firebase
@@ -17,7 +21,7 @@ import { db, ensureAuthenticated } from './firebaseConfig';
  * @param {Array} activities - Array of activity objects from Strava
  * @returns {Promise<Object>} Result object with success status and count
  */
-export const storeActivitiesInFirebase = async (athleteId, activities) => {
+export const storeActivitiesInFirebase = async (athleteId, activities, settings = null) => {
   if (!db) {
     throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
   }
@@ -31,7 +35,7 @@ export const storeActivitiesInFirebase = async (athleteId, activities) => {
     // Store each activity in Firebase
     for (const activity of activities) {
       // Use Strava activity ID as document ID to prevent duplicates
-      const activityRef = doc(db, 'athletes', athleteId, 'activities', String(activity.id));
+      const activityRef = doc(db, 'athletes', String(athleteId), 'activities', String(activity.id));
       
       // Prepare activity data for Firestore
       const activityData = {
@@ -57,7 +61,8 @@ export const storeActivitiesInFirebase = async (athleteId, activities) => {
         map: activity.map || {},
         start_latlng: activity.start_latlng || [],
         end_latlng: activity.end_latlng || [],
-        // Add timestamp for Firebase
+        tss: calculateTSS(activity, settings), 
+  // Add timestamp for Firebase
         stored_at: Timestamp.now(),
         updated_at: Timestamp.now(),
       };
@@ -79,11 +84,14 @@ export const storeActivitiesInFirebase = async (athleteId, activities) => {
 
 /**
  * Get activities from Firebase for a specific athlete
+ * Supports optional filtering by activity type (applied client-side to avoid composite index requirement)
  * @param {string} athleteId - The Strava athlete ID
  * @param {number} limit - Maximum number of activities to retrieve
+ * @param {string|null} startAfterValue - For cursor pagination, the start_date to paginate after
+ * @param {string|null} activityType - Optional activity type to filter by (applied client-side)
  * @returns {Promise<Array>} Array of activity objects
  */
-export const getActivitiesFromFirebase = async (athleteId, limit = 100) => {
+export const getActivitiesFromFirebase = async (athleteId, limit = 100, startAfterValue = null, activityType = null) => {
   if (!db) {
     throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
   }
@@ -92,17 +100,33 @@ export const getActivitiesFromFirebase = async (athleteId, limit = 100) => {
     // Ensure user is authenticated before performing database operations
     await ensureAuthenticated();
     
-    const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
-    const q = query(
-      activitiesRef,
-      orderBy('start_date', 'desc')
-    );
+    const activitiesRef = collection(db, 'athletes', String(athleteId), 'activities');
+    // Query without type filter to avoid composite index requirement
+    // We'll filter by type client-side instead
+    const qParts = [activitiesRef];
+    qParts.push(orderBy('start_date', 'desc'));
+    if (startAfterValue) {
+      qParts.push(firestoreStartAfter(startAfterValue));
+    }
+    // Fetch more than limit if filtering by type to ensure we get enough results
+    qParts.push(firestoreLimit(activityType ? limit * 2 : limit));
 
+    const q = query(...qParts);
     const querySnapshot = await getDocs(q);
     const activities = [];
 
     querySnapshot.forEach((doc) => {
-      activities.push(doc.data());
+      const data = doc.data();
+      // Apply type filter client-side
+      if (activityType) {
+        const actType = (data.type || data.sport_type || '').toString().toLowerCase();
+        const filterType = activityType.toString().toLowerCase();
+        if (actType === filterType || (filterType === 'ride' && actType.includes('ride'))) {
+          activities.push(data);
+        }
+      } else {
+        activities.push(data);
+      }
     });
 
     return activities.slice(0, limit);
@@ -128,7 +152,7 @@ export const getActivitiesByDateRange = async (athleteId, startDate, endDate) =>
     // Ensure user is authenticated before performing database operations
     await ensureAuthenticated();
     
-    const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
+    const activitiesRef = collection(db, 'athletes', String(athleteId), 'activities');
     const q = query(
       activitiesRef,
       where('start_date', '>=', startDate.toISOString()),
@@ -151,13 +175,11 @@ export const getActivitiesByDateRange = async (athleteId, startDate, endDate) =>
 };
 
 /**
- * Compute personal records (PRs) per sport from stored activities.
- * PRs returned per sport include: total_activities, longest_distance, max_average_speed, max_total_elevation_gain
- * Each PR includes the activity id, name and start_date where it occurred.
+ * Delete all activities for an athlete from Firebase
  * @param {string} athleteId
- * @returns {Promise<Object>} Object keyed by sport type
+ * @returns {Promise<Object>} result with count
  */
-export const getPersonalRecords = async (athleteId) => {
+export const deleteAllActivities = async (athleteId) => {
   if (!db) {
     throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
   }
@@ -165,410 +187,433 @@ export const getPersonalRecords = async (athleteId) => {
   try {
     await ensureAuthenticated();
 
-    const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
-    const q = query(activitiesRef, orderBy('start_date', 'desc'));
-    const querySnapshot = await getDocs(q);
+    const activitiesRef = collection(db, 'athletes', String(athleteId), 'activities');
+    const querySnapshot = await getDocs(activitiesRef);
+    let deletedCount = 0;
 
-    const sports = {};
-
+    const deletions = [];
     querySnapshot.forEach((docSnap) => {
-      const a = docSnap.data();
-      const sport = a.sport_type || a.type || 'Unknown';
+      const docRef = doc(db, 'athletes', String(athleteId), 'activities', docSnap.id);
+      deletions.push(deleteDoc(docRef));
+      deletedCount++;
+    });
 
-      if (!sports[sport]) {
-        sports[sport] = {
-          total_activities: 0,
-          longest_distance: { value: 0, activity: null },
-          max_average_speed: { value: 0, activity: null },
-          max_total_elevation_gain: { value: 0, activity: null },
+    await Promise.all(deletions);
+
+    return {
+      success: true,
+      count: deletedCount,
+      message: `Deleted ${deletedCount} activities for athlete ${athleteId}`,
+    };
+  } catch (error) {
+    console.error('Error deleting activities from Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a single activity from Firebase
+ * @param {string} athleteId
+ * @param {string|number} activityId
+ * @returns {Promise<Object>}
+ */
+export const deleteActivityFromFirebase = async (athleteId, activityId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+  try {
+    await ensureAuthenticated();
+    const docRef = doc(db, 'athletes', String(athleteId), 'activities', String(activityId));
+    await deleteDoc(docRef);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting activity from Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Compute KPIs for a list of activities and store them in `athletes/{athleteId}/kpis/{activityType}`
+ * Supported activity types: Run, Hike, Workout, Swim, Walk
+ * @param {string} athleteId
+ * @param {Array} activities - array of activity objects
+ * @returns {Promise<Object>} result summary
+ */
+export const computeAndStoreKPIsFromActivities = async (athleteId, activities = []) => {
+  if (!db) {
+    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
+  }
+
+  try {
+    await ensureAuthenticated();
+
+    // Include 'Ride' for cycling KPIs
+    const activityTypes = ['Run', 'Ride', 'Hike', 'Workout', 'Swim', 'Walk'];
+    const results = {};
+
+    for (const type of activityTypes) {
+      // Match activity by 'type' or 'sport_type', case-insensitive.
+      // Also accept common Ride variants (e.g., 'VirtualRide', 'EBikeRide') when looking for 'Ride'.
+      const matchType = (a, t) => {
+        const at = (a.type || a.sport_type || '').toString().toLowerCase();
+        const tt = t.toString().toLowerCase();
+        if (at === tt) return true;
+        // For Ride, accept anything that contains 'ride' (e.g., 'virtualride')
+        if (tt === 'ride' && at.includes('ride')) return true;
+        return false;
+      };
+
+      const filtered = activities.filter((a) => matchType(a, type));
+      const totalCount = filtered.length;
+
+      const kpi = {
+        activityType: type,
+        totalCount,
+        longest: null,
+        mostElevation: null,
+        fastest: null,
+        lastUpdated: Timestamp.now(),
+      };
+
+      if (totalCount > 0) {
+        // Longest (by distance)
+        const longest = filtered.reduce((best, curr) => {
+          return (curr.distance || 0) > (best.distance || 0) ? curr : best;
+        }, filtered[0]);
+
+        // Most Elevation
+        const mostElevation = filtered.reduce((best, curr) => {
+          return (curr.total_elevation_gain || 0) > (best.total_elevation_gain || 0) ? curr : best;
+        }, filtered[0]);
+
+        // Fastest (by average_speed)
+        const fastest = filtered.reduce((best, curr) => {
+          const currSpeed = curr.average_speed || 0;
+          const bestSpeed = best.average_speed || 0;
+          return currSpeed > bestSpeed ? curr : best;
+        }, filtered[0]);
+
+        kpi.longest = {
+          id: longest.id,
+          name: longest.name,
+          distance: longest.distance,
+          moving_time: longest.moving_time,
+          start_date: longest.start_date,
+        };
+
+        kpi.mostElevation = {
+          id: mostElevation.id,
+          name: mostElevation.name,
+          total_elevation_gain: mostElevation.total_elevation_gain,
+          distance: mostElevation.distance,
+          start_date: mostElevation.start_date,
+        };
+
+        kpi.fastest = {
+          id: fastest.id,
+          name: fastest.name,
+          average_speed: fastest.average_speed || 0,
+          distance: fastest.distance,
+          start_date: fastest.start_date,
         };
       }
 
-      const s = sports[sport];
-      s.total_activities += 1;
+      // store KPI doc
+      const kpiRef = doc(db, 'athletes', String(athleteId), 'kpis', type);
+      await setDoc(kpiRef, kpi, { merge: true });
+      results[type] = kpi;
+    }
 
-      if (typeof a.distance === 'number' && a.distance > s.longest_distance.value) {
-        s.longest_distance = { value: a.distance, activity: { id: a.id, name: a.name, start_date: a.start_date } };
-      }
-
-      if (typeof a.average_speed === 'number' && a.average_speed > s.max_average_speed.value) {
-        s.max_average_speed = { value: a.average_speed, activity: { id: a.id, name: a.name, start_date: a.start_date } };
-      }
-
-      if (typeof a.total_elevation_gain === 'number' && a.total_elevation_gain > s.max_total_elevation_gain.value) {
-        s.max_total_elevation_gain = { value: a.total_elevation_gain, activity: { id: a.id, name: a.name, start_date: a.start_date } };
-      }
-    });
-
-    return sports;
+    return { success: true, results };
   } catch (error) {
-    console.error('Error computing personal records from Firebase:', error);
+    console.error('Error computing/storing KPIs:', error);
     throw error;
   }
 };
 
 /**
- * Compute running PRs for standard distances.
- * For each target distance, we prefer activities within 5% of the distance (exact match).
- * If none, we estimate the time from any activity longer than the distance by scaling the moving_time.
+ * Sync provided activities into Firebase (store each activity) and compute KPIs
+ * This is a convenience wrapper that stores activities and then computes KPIs
  * @param {string} athleteId
- * @returns {Promise<Object>} PRs keyed by distance label
+ * @param {Array} activities
  */
-export const getRunningPRs = async (athleteId) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
+export const syncActivitiesAndComputeKPIs = async (athleteId, activities = []) => {
+  if (!db) throw new Error('Firebase is not initialized.');
 
   try {
     await ensureAuthenticated();
 
-    const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
-    const q = query(activitiesRef, orderBy('start_date', 'desc'));
-    const querySnapshot = await getDocs(q);
+    // Store activities (reuses existing function)
+    const storeResult = await storeActivitiesInFirebase(athleteId, activities);
 
-    // Targets in meters and labels
-    const targets = [
-      { label: '400m', meters: 400 },
-      { label: '1km', meters: 1000 },
-      { label: '1 mile', meters: 1609.34 },
-      { label: '5k', meters: 5000 },
-      { label: '10k', meters: 10000 },
-      { label: '15k', meters: 15000 },
-      { label: 'Half Marathon', meters: 21097.5 },
-      { label: 'Marathon', meters: 42195 },
-    ];
+    // Compute KPIs from the stored activities (use passed activities to avoid refetch)
+    const kpiResult = await computeAndStoreKPIsFromActivities(athleteId, activities);
 
-    const results = {};
-    // initialize
-    targets.forEach((t) => {
-      results[t.label] = { timeSeconds: null, activity: null, method: null };
-    });
-
-    let longest = { distance: 0, activity: null };
-
-    querySnapshot.forEach((docSnap) => {
-      const a = docSnap.data();
-      const sport = a.sport_type || a.type || 'Unknown';
-      if (sport.toLowerCase() !== 'run' && sport.toLowerCase() !== 'running') return;
-      if (!a.distance || !a.moving_time) return;
-
-      // longest
-      if (a.distance > longest.distance) {
-        longest = { distance: a.distance, activity: { id: a.id, name: a.name, start_date: a.start_date } };
-      }
-
-      // evaluate targets
-      for (const t of targets) {
-        const D = t.meters;
-        const tol = D * 0.05; // 5% tolerance
-
-        // exact match within tolerance
-        if (Math.abs(a.distance - D) <= tol) {
-          const candidateTime = a.moving_time;
-          if (results[t.label].timeSeconds === null || candidateTime < results[t.label].timeSeconds) {
-            results[t.label] = { timeSeconds: candidateTime, activity: { id: a.id, name: a.name, start_date: a.start_date, distance: a.distance }, method: 'exact' };
-          }
-          continue;
-        }
-
-        // estimate if activity longer than D
-        if (a.distance >= D) {
-          const estimated = a.moving_time * (D / a.distance);
-          if (results[t.label].timeSeconds === null || estimated < results[t.label].timeSeconds) {
-            results[t.label] = { timeSeconds: estimated, activity: { id: a.id, name: a.name, start_date: a.start_date, distance: a.distance }, method: 'estimate' };
-          }
-        }
-      }
-    });
-
-    // attach longest
-    results['Longest'] = { distance: longest.distance, activity: longest.activity };
-
-    return results;
+    return { success: true, storeResult, kpiResult };
   } catch (error) {
-    console.error('Error computing running PRs from Firebase:', error);
+    console.error('Error in full sync + KPI:', error);
     throw error;
   }
 };
 
 /**
- * Compute cycling PRs for standard distances and elevation metrics.
- * Returns times for distance targets (using exact within 5% or estimated from longer rides),
- * longest ride, biggest climb (max elevation in single activity), and total elevation gain (sum).
+ * Get KPI documents for an athlete
  * @param {string} athleteId
- * @returns {Promise<Object>} PRs keyed by metric label
+ * @returns {Promise<Object>} map of activityType -> kpi doc data
  */
-export const getCyclingPRs = async (athleteId) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
+export const getKPIsForAthlete = async (athleteId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
 
   try {
     await ensureAuthenticated();
 
-    const activitiesRef = collection(db, 'athletes', athleteId, 'activities');
-    const q = query(activitiesRef, orderBy('start_date', 'desc'));
-    const querySnapshot = await getDocs(q);
+    const kpisRef = collection(db, 'athletes', String(athleteId), 'kpis');
+    const snapshot = await getDocs(kpisRef);
+    const result = {};
+    snapshot.forEach((docSnap) => {
+      result[docSnap.id] = docSnap.data();
+    });
+    return result;
+  } catch (error) {
+    console.error('Error fetching KPIs for athlete:', error);
+    throw error;
+  }
+};
 
-    const targets = [
-      { label: '5 mile', meters: 1609.34 * 5 },
-      { label: '10K', meters: 10000 },
-      { label: '10 mile', meters: 1609.34 * 10 },
-      { label: '20K', meters: 20000 },
-      { label: '30K', meters: 30000 },
-      { label: '40K', meters: 40000 },
-      { label: '50K', meters: 50000 },
-      { label: '80K', meters: 80000 },
-      { label: '50 mile', meters: 1609.34 * 50 },
-      { label: '90K', meters: 90000 },
-      { label: '100K', meters: 100000 },
-      { label: '100 mile', meters: 1609.34 * 100 },
-      { label: '180K', meters: 180000 },
+/**
+ * Get a single activity document from Firebase for an athlete
+ * @param {string} athleteId
+ * @param {string|number} activityId
+ * @returns {Promise<Object|null>} activity data or null if not found
+ */
+export const getActivityFromFirebase = async (athleteId, activityId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+
+  try {
+    await ensureAuthenticated();
+    const activityRef = doc(db, 'athletes', String(athleteId), 'activities', String(activityId));
+    const snap = await getDoc(activityRef);
+    if (!snap.exists()) return null;
+    return snap.data();
+  } catch (error) {
+    console.error('Error fetching activity from Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get Strava stats from Firebase if they were cached today, otherwise return null
+ * @param {string|number} athleteId
+ * @returns {Promise<Object|null>} Cached stats if available and from today, otherwise null
+ */
+export const getStravaStatsFromFirebase = async (athleteId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+
+  try {
+    await ensureAuthenticated();
+    const statsRef = doc(db, 'athletes', String(athleteId), 'cached_data', 'strava_stats');
+    const snap = await getDoc(statsRef);
+    
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+    if (!data.updated_at) return null;
+
+    // Check if the cached data is from today
+    const lastUpdate = data.updated_at.toDate ? data.updated_at.toDate() : new Date(data.updated_at);
+    const today = new Date();
+    const isSameDay = 
+      lastUpdate.getFullYear() === today.getFullYear() &&
+      lastUpdate.getMonth() === today.getMonth() &&
+      lastUpdate.getDate() === today.getDate();
+
+    if (!isSameDay) return null;
+
+    return data.stats;
+  } catch (error) {
+    console.error('Error fetching cached stats from Firebase:', error);
+    return null;
+  }
+};
+
+/**
+ * Store Strava stats in Firebase with update timestamp
+ * @param {string|number} athleteId
+ * @param {Object} stats - Athlete stats object from Strava
+ * @returns {Promise<Object>} Result object with success status
+ */
+export const storeStravaStatsInFirebase = async (athleteId, stats) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+
+  try {
+    await ensureAuthenticated();
+    const statsRef = doc(db, 'athletes', String(athleteId), 'cached_data', 'strava_stats');
+    
+    await setDoc(statsRef, {
+      stats,
+      updated_at: Timestamp.now(),
+    }, { merge: true });
+
+    return { success: true, message: 'Stats cached in Firebase' };
+  } catch (error) {
+    console.error('Error storing stats in Firebase:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get year statistics from Firebase activities
+ * Computes stats for a specific year including totals, by type, by month, and highlights
+ * @param {string} athleteId - The Strava athlete ID
+ * @param {number} year - The year to get stats for (e.g., 2025)
+ * @returns {Promise<Object>} Year statistics object
+ */
+export const getYearStatsFromFirebase = async (athleteId, year) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+
+  try {
+    await ensureAuthenticated();
+
+    // Get activities for the specified year
+    const startDate = new Date(year, 0, 1); // January 1st
+    const endDate = new Date(year, 11, 31, 23, 59, 59); // December 31st
+
+    const activities = await getActivitiesByDateRange(athleteId, startDate, endDate);
+
+    // Initialize stats object
+    const stats = {
+      year,
+      summary: {
+        totalActivities: activities.length,
+        totalDistance: 0,
+        totalMovingTime: 0,
+        totalElevation: 0,
+      },
+      byType: {},
+      byMonth: {},
+      biggestDay: null,
+    };
+
+    // Initialize months
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
     ];
-
-    const results = {};
-    targets.forEach((t) => {
-      results[t.label] = { timeSeconds: null, activity: null, method: null };
+    monthNames.forEach(month => {
+      stats.byMonth[month] = {
+        count: 0,
+        distance: 0,
+        movingTime: 0,
+        elevation: 0,
+      };
     });
 
-    let longest = { distance: 0, activity: null };
-    let biggestClimb = { elevation: 0, activity: null };
-    let totalElevationGain = 0;
+    // Track activities by day for biggest day calculation
+    const dayStats = {};
 
-    querySnapshot.forEach((docSnap) => {
-      const a = docSnap.data();
-      const sport = a.sport_type || a.type || 'Unknown';
-      if (!sport) return;
-      const sLower = sport.toLowerCase();
-      if (sLower !== 'ride' && sLower !== 'cycling' && sLower !== 'ride') return;
-      if (!a.distance || !a.moving_time) return;
+    // Process each activity
+    activities.forEach(activity => {
+      const distance = activity.distance || 0;
+      const movingTime = activity.moving_time || 0;
+      const elevation = activity.total_elevation_gain || 0;
+      const type = activity.type || activity.sport_type || 'Other';
+      const activityDate = new Date(activity.start_date_local || activity.start_date);
+      const monthIndex = activityDate.getMonth();
+      const monthName = monthNames[monthIndex];
+      const dateKey = activityDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
-      // longest
-      if (a.distance > longest.distance) {
-        longest = { distance: a.distance, activity: { id: a.id, name: a.name, start_date: a.start_date } };
+      // Update summary
+      stats.summary.totalDistance += distance;
+      stats.summary.totalMovingTime += movingTime;
+      stats.summary.totalElevation += elevation;
+
+      // Update by type
+      if (!stats.byType[type]) {
+        stats.byType[type] = {
+          count: 0,
+          distance: 0,
+          movingTime: 0,
+          elevation: 0,
+        };
       }
+      stats.byType[type].count += 1;
+      stats.byType[type].distance += distance;
+      stats.byType[type].movingTime += movingTime;
+      stats.byType[type].elevation += elevation;
 
-      // biggest climb (single activity elevation)
-      const climb = a.total_elevation_gain || 0;
-      totalElevationGain += climb;
-      if (climb > biggestClimb.elevation) {
-        biggestClimb = { elevation: climb, activity: { id: a.id, name: a.name, start_date: a.start_date } };
+      // Update by month
+      stats.byMonth[monthName].count += 1;
+      stats.byMonth[monthName].distance += distance;
+      stats.byMonth[monthName].movingTime += movingTime;
+      stats.byMonth[monthName].elevation += elevation;
+
+      // Track daily stats for biggest day
+      if (!dayStats[dateKey]) {
+        dayStats[dateKey] = {
+          date: dateKey,
+          count: 0,
+          distance: 0,
+        };
       }
+      dayStats[dateKey].count += 1;
+      dayStats[dateKey].distance += distance;
+    });
 
-      // distance PRs
-      for (const t of targets) {
-        const D = t.meters;
-        const tol = D * 0.05;
+    // Find biggest day (by distance)
+    const days = Object.values(dayStats);
+    if (days.length > 0) {
+      stats.biggestDay = days.reduce((max, day) => 
+        day.distance > max.distance ? day : max
+      );
+    }
 
-        if (Math.abs(a.distance - D) <= tol) {
-          const cand = a.moving_time;
-          if (results[t.label].timeSeconds === null || cand < results[t.label].timeSeconds) {
-            results[t.label] = { timeSeconds: cand, activity: { id: a.id, name: a.name, start_date: a.start_date, distance: a.distance }, method: 'exact' };
-          }
-          continue;
-        }
-
-        if (a.distance >= D) {
-          const est = a.moving_time * (D / a.distance);
-          if (results[t.label].timeSeconds === null || est < results[t.label].timeSeconds) {
-            results[t.label] = { timeSeconds: est, activity: { id: a.id, name: a.name, start_date: a.start_date, distance: a.distance }, method: 'estimate' };
-          }
-        }
+    // Remove months with no activities for cleaner display
+    Object.keys(stats.byMonth).forEach(month => {
+      if (stats.byMonth[month].count === 0) {
+        delete stats.byMonth[month];
       }
     });
 
-    results['Longest Ride'] = { distance: longest.distance, activity: longest.activity };
-    results['Biggest Climb'] = { elevation: biggestClimb.elevation, activity: biggestClimb.activity };
-    results['Elevation Gain'] = { total: totalElevationGain };
-
-    return results;
+    return stats;
   } catch (error) {
-    console.error('Error computing cycling PRs from Firebase:', error);
+    console.error('Error fetching year stats from Firebase:', error);
     throw error;
   }
 };
 
 /**
- * Store athlete profile in Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @param {Object} athleteProfile - Athlete profile object from Strava
- * @returns {Promise<Object>} Result object with success status
+ * Get athlete settings (HR zones, FTP, etc.)
+ * @param {string} athleteId 
+ * @returns {Promise<Object|null>}
  */
-export const storeAthleteProfile = async (athleteId, athleteProfile) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
+export const getAthleteSettings = async (athleteId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
   try {
     await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    
-    const profileData = {
-      ...athleteProfile,
-      stored_at: Timestamp.now(),
+    const settingsRef = doc(db, 'athletes', String(athleteId), 'profile', 'settings');
+    const snap = await getDoc(settingsRef);
+    return snap.exists() ? snap.data() : null;
+  } catch (error) {
+    console.error('Error fetching athlete settings:', error);
+    return null;
+  }
+};
+
+/**
+ * Update athlete settings
+ * @param {string} athleteId 
+ * @param {Object} settings 
+ */
+export const updateAthleteSettings = async (athleteId, settings) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+  try {
+    await ensureAuthenticated();
+    const settingsRef = doc(db, 'athletes', String(athleteId), 'profile', 'settings');
+    await setDoc(settingsRef, {
+      ...settings,
       updated_at: Timestamp.now(),
-    };
-
-    await setDoc(athleteRef, { profile: profileData }, { merge: true });
-
-    return {
-      success: true,
-      message: 'Athlete profile stored successfully',
-    };
+    }, { merge: true });
+    return { success: true };
   } catch (error) {
-    console.error('Error storing athlete profile in Firebase:', error);
-    throw error;
-  }
-};
-
-/**
- * Get athlete profile from Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @returns {Promise<Object|null>} Athlete profile object or null
- */
-export const getAthleteProfile = async (athleteId) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
-  try {
-    await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    const docSnap = await getDoc(athleteRef);
-
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      return data.profile || null;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error fetching athlete profile from Firebase:', error);
-    throw error;
-  }
-};
-
-/**
- * Store athlete stats in Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @param {Object} athleteStats - Athlete stats object from Strava
- * @returns {Promise<Object>} Result object with success status
- */
-export const storeAthleteStats = async (athleteId, athleteStats) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
-  try {
-    await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    
-    const statsData = {
-      ...athleteStats,
-      stored_at: Timestamp.now(),
-      updated_at: Timestamp.now(),
-    };
-
-    await setDoc(athleteRef, { stats: statsData }, { merge: true });
-
-    return {
-      success: true,
-      message: 'Athlete stats stored successfully',
-    };
-  } catch (error) {
-    console.error('Error storing athlete stats in Firebase:', error);
-    throw error;
-  }
-};
-
-/**
- * Get athlete stats from Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @returns {Promise<Object|null>} Athlete stats object or null
- */
-export const getAthleteStats = async (athleteId) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
-  try {
-    await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    const docSnap = await getDoc(athleteRef);
-
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      return data.stats || null;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error fetching athlete stats from Firebase:', error);
-    throw error;
-  }
-};
-
-/**
- * Store sync status in Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @param {Object} syncStatus - Sync status object
- * @returns {Promise<Object>} Result object with success status
- */
-export const storeSyncStatus = async (athleteId, syncStatus) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
-  try {
-    await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    
-    const statusData = {
-      ...syncStatus,
-      stored_at: Timestamp.now(),
-    };
-
-    await setDoc(athleteRef, { syncStatus: statusData }, { merge: true });
-
-    return {
-      success: true,
-      message: 'Sync status stored successfully',
-    };
-  } catch (error) {
-    console.error('Error storing sync status in Firebase:', error);
-    throw error;
-  }
-};
-
-/**
- * Get sync status from Firebase
- * @param {string} athleteId - The Strava athlete ID
- * @returns {Promise<Object|null>} Sync status object or null
- */
-export const getSyncStatus = async (athleteId) => {
-  if (!db) {
-    throw new Error('Firebase is not initialized. Please check your Firebase configuration.');
-  }
-
-  try {
-    await ensureAuthenticated();
-    
-    const athleteRef = doc(db, 'athletes', athleteId);
-    const docSnap = await getDoc(athleteRef);
-
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      return data.syncStatus || null;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error fetching sync status from Firebase:', error);
+    console.error('Error updating athlete settings:', error);
     throw error;
   }
 };

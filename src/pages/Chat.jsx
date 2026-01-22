@@ -1,14 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  getStoredAuthData, 
+import {
+  Container,
+  Stack,
+  Group,
+  Title,
+  Text,
+  Button,
+  TextInput,
+  Paper,
+  Avatar,
+  ScrollArea,
+  Select,
+  Badge,
+  rem,
+  Box,
+  ActionIcon,
+  Tooltip,
+  Paper as MantinePaper,
+  Alert,
+} from '@mantine/core';
+import {
+  getStoredAuthData,
   getAthleteActivities,
   refreshAccessToken,
   storeAuthData,
-  isTokenExpired 
+  isTokenExpired
 } from '../utils/stravaApi';
 import { sendChatMessage, listModels, checkOllamaHealth } from '../utils/ollamaApi';
-import './Chat.css';
 
 function Chat() {
   const [messages, setMessages] = useState([]);
@@ -18,7 +37,7 @@ function Chat() {
   const [selectedModel, setSelectedModel] = useState('llama2');
   const [availableModels, setAvailableModels] = useState([]);
   const [activities, setActivities] = useState([]);
-  const messagesEndRef = useRef(null);
+  const viewport = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -31,7 +50,7 @@ function Chat() {
   }, [messages]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    viewport.current?.scrollTo({ top: viewport.current.scrollHeight, behavior: 'smooth' });
   };
 
   const checkOllamaConnection = async () => {
@@ -40,15 +59,12 @@ function Chat() {
       if (isHealthy) {
         setOllamaStatus('connected');
         const models = await listModels();
-        setAvailableModels(models);
-        if (models.length > 0) {
-          setSelectedModel(models[0].name);
-        }
+        setAvailableModels(models.map(m => ({ value: m.name, label: m.name })));
+        if (models.length > 0) setSelectedModel(models[0].name);
       } else {
         setOllamaStatus('disconnected');
       }
     } catch (err) {
-      console.error('Error checking Ollama connection:', err);
       setOllamaStatus('disconnected');
     }
   };
@@ -56,218 +72,140 @@ function Chat() {
   const loadActivitiesForContext = async () => {
     try {
       const authData = getStoredAuthData();
-      
-      if (!authData || !authData.accessToken) {
-        return;
-      }
-
+      if (!authData?.accessToken) return;
       let accessToken = authData.accessToken;
-
       if (isTokenExpired() && authData.refreshToken) {
         const newAuthData = await refreshAccessToken(authData.refreshToken);
         storeAuthData(newAuthData);
         accessToken = newAuthData.access_token;
       }
-
       const data = await getAthleteActivities(accessToken, 1, 10);
       setActivities(data);
-    } catch (err) {
-      console.error('Error loading activities:', err);
-    }
-  };
-
-  const formatActivityContext = () => {
-    if (activities.length === 0) return '';
-
-    const activitySummary = activities.map(activity => {
-      const distance = (activity.distance / 1000).toFixed(2);
-      const duration = Math.floor(activity.moving_time / 60);
-      return `- ${activity.name} (${activity.type}): ${distance}km in ${duration} minutes on ${new Date(activity.start_date).toLocaleDateString()}`;
-    }).join('\n');
-
-    return `\n\nHere are my recent activities:\n${activitySummary}`;
+    } catch (err) { console.error(err); }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading || ollamaStatus !== 'connected') return;
 
-    const userMessage = {
-      role: 'user',
-      content: input.trim(),
-    };
-
+    const userMessage = { role: 'user', content: input.trim() };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setLoading(true);
 
     try {
-      const conversationHistory = [...messages, userMessage];
-      
-      // Add system context with activities
       const systemMessage = {
         role: 'system',
-        content: `You are a helpful AI training assistant. You help athletes analyze their training activities and provide advice. Be encouraging and specific in your recommendations.${formatActivityContext()}`,
+        content: `You are a helpful AI training assistant. Analysis: ${activities.map(a => `- ${a.name}: ${(a.distance / 1000).toFixed(2)}km`).join('\n')}`,
       };
+      const messagesToSend = [systemMessage, ...messages, userMessage];
 
-      const messagesToSend = [systemMessage, ...conversationHistory];
-
-      let assistantMessage = {
-        role: 'assistant',
-        content: '',
-      };
-
+      let assistantMessage = { role: 'assistant', content: '' };
       setMessages(prev => [...prev, assistantMessage]);
 
-      await sendChatMessage(
-        selectedModel,
-        messagesToSend,
-        (chunk) => {
-          assistantMessage.content += chunk;
-          setMessages(prev => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = { ...assistantMessage };
-            return newMessages;
-          });
-        }
-      );
+      await sendChatMessage(selectedModel, messagesToSend, (chunk) => {
+        assistantMessage.content += chunk;
+        setMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1] = { ...assistantMessage };
+          return newMessages;
+        });
+      });
     } catch (error) {
-      console.error('Error sending message:', error);
-      const errorMessage = {
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please make sure Ollama is running and try again.',
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error. Is Ollama running?' }]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRetryConnection = () => {
-    setOllamaStatus('checking');
-    checkOllamaConnection();
-  };
-
   return (
-    <div className="chat">
-      <header className="chat-header">
-        <button className="back-btn" onClick={() => navigate('/')}>
-          ← Back
-        </button>
-        <div className="header-content">
-          <h1>💬 AI Training Chat</h1>
-          <div className="header-info">
-            <div className={`status-indicator ${ollamaStatus}`}>
-              <span className="status-dot"></span>
-              {ollamaStatus === 'connected' && 'Connected to Ollama'}
-              {ollamaStatus === 'disconnected' && 'Ollama Disconnected'}
-              {ollamaStatus === 'checking' && 'Checking connection...'}
-            </div>
-            {availableModels.length > 0 && (
-              <select 
-                value={selectedModel} 
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="model-selector"
-                disabled={loading}
+    <Stack gap="md" h="calc(100vh - 120px)">
+      <Group justify="space-between">
+        <Title order={1}>AI Coach</Title>
+        <Group>
+          <Badge
+            color={ollamaStatus === 'connected' ? 'green' : ollamaStatus === 'checking' ? 'yellow' : 'red'}
+            variant="dot"
+          >
+            {ollamaStatus === 'connected' ? 'IQ Active' : 'Ollama Offline'}
+          </Badge>
+          {ollamaStatus === 'connected' && (
+            <Select
+              size="xs"
+              data={availableModels}
+              value={selectedModel}
+              onChange={setSelectedModel}
+              placeholder="Model"
+              style={{ width: rem(100) }}
+            />
+          )}
+        </Group>
+      </Group>
+
+      <Paper withBorder radius="lg" p={0} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: 'var(--mantine-color-midnight-9)' }}>
+        <ScrollArea viewportRef={viewport} style={{ flex: 1 }} p="md">
+          {messages.length === 0 && (
+            <Stack align="center" gap="lg" py={rem(80)}>
+              <Text size="60px">🤖</Text>
+              <Title order={2} ta="center" fw={900}>Personalized Intelligence</Title>
+              <Text size="sm" c="dimmed" ta="center">Ask for recovery advice or workout analysis.</Text>
+              <Group justify="center">
+                <Button variant="outline" size="xs" color="blue" onClick={() => setInput('Analyze my last 5 runs')}>Last 5 runs</Button>
+                <Button variant="outline" size="xs" color="blue" onClick={() => setInput('Should I rest today?')}>Rest advice</Button>
+                <Button variant="outline" size="xs" color="blue" onClick={() => setInput('Suggest a 5k interval workout')}>5k workout</Button>
+              </Group>
+            </Stack>
+          )}
+
+          <Stack gap="md">
+            {messages.map((message, index) => (
+              <Group
+                key={index}
+                align="flex-start"
+                justify={message.role === 'user' ? 'flex-end' : 'flex-start'}
+                gap="xs"
               >
-                {availableModels.map((model) => (
-                  <option key={model.name} value={model.name}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="chat-main">
-        {ollamaStatus === 'disconnected' && (
-          <div className="connection-error">
-            <div className="error-content">
-              <span className="error-icon">⚠️</span>
-              <h3>Ollama Not Connected</h3>
-              <p>
-                Please make sure Ollama is installed and running on your system.
-              </p>
-              <p className="error-hint">
-                Start Ollama by running: <code>ollama serve</code>
-              </p>
-              <button onClick={handleRetryConnection} className="retry-btn">
-                Retry Connection
-              </button>
-            </div>
-          </div>
-        )}
-
-        {ollamaStatus === 'connected' && (
-          <>
-            <div className="messages-container">
-              {messages.length === 0 && (
-                <div className="welcome-message">
-                  <span className="welcome-icon">👋</span>
-                  <h2>Welcome to AI Training Chat!</h2>
-                  <p>Ask me anything about your training activities, get advice, or discuss your fitness goals.</p>
-                  <div className="suggestion-chips">
-                    <button 
-                      onClick={() => setInput('How has my training been this week?')}
-                      className="suggestion-chip"
-                    >
-                      How has my training been?
-                    </button>
-                    <button 
-                      onClick={() => setInput('What should I focus on next?')}
-                      className="suggestion-chip"
-                    >
-                      What should I focus on?
-                    </button>
-                    <button 
-                      onClick={() => setInput('Analyze my recent running activities')}
-                      className="suggestion-chip"
-                    >
-                      Analyze my activities
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`message ${message.role}`}
+                {message.role !== 'user' && <Avatar color="blue" radius="xl" size="sm">IQ</Avatar>}
+                <MantinePaper
+                  p="sm"
+                  radius="md"
+                  bg={message.role === 'user' ? 'blue.7' : 'midnight.7'}
+                  c={message.role === 'user' ? 'white' : 'inherit'}
+                  style={{ maxWidth: '80%', border: 'none' }}
                 >
-                  <div className="message-avatar">
-                    {message.role === 'user' ? '👤' : '🤖'}
-                  </div>
-                  <div className="message-content">
-                    <div className="message-text">{message.content}</div>
-                  </div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
+                  <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{message.content}</Text>
+                </MantinePaper>
+                {message.role === 'user' && <Avatar color="midnight.4" radius="xl" size="sm">ME</Avatar>}
+              </Group>
+            ))}
+          </Stack>
+        </ScrollArea>
 
-            <form className="chat-input-form" onSubmit={handleSubmit}>
-              <input
-                type="text"
+        <Box p="md" bg="midnight.8" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <form onSubmit={handleSubmit}>
+            <Group gap="xs">
+              <TextInput
+                placeholder="Ask about your performance..."
+                style={{ flex: 1 }}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about your training..."
-                className="chat-input"
-                disabled={loading}
+                disabled={loading || ollamaStatus !== 'connected'}
+                radius="md"
               />
-              <button 
-                type="submit" 
-                className="send-btn" 
-                disabled={loading || !input.trim()}
-              >
-                {loading ? '⏳' : '📤'}
-              </button>
-            </form>
-          </>
-        )}
-      </main>
-    </div>
+              <Button type="submit" loading={loading} disabled={!input.trim() || ollamaStatus !== 'connected'} radius="md">
+                Send
+              </Button>
+            </Group>
+          </form>
+        </Box>
+      </Paper>
+
+      {ollamaStatus === 'disconnected' && (
+        <Alert color="red" title="Local AI Offline" variant="light" icon="⚠️">
+          Ollama not detected. Start with <code>ollama serve</code> for AI Coach.
+        </Alert>
+      )}
+    </Stack>
   );
 }
 

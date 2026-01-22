@@ -1,0 +1,303 @@
+.instagram-share-container {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  z-index: -1;
+}
+
+/* Common Styles */
+.share-template {
+  width: 1080px;
+  height: 1920px;
+  background: #111;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  padding: 80px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  color: white;
+  opacity: 1;
+}
+
+.brand-tag {
+  position: absolute;
+  bottom: 60px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 1.2rem;
+  letter-spacing: 0.2rem;
+  text-transform: uppercase;
+  opacity: 0.5;
+  font-weight: 600;
+}
+
+/* --- Story 1: Distance Flex --- */
+.story-distance {
+  background: radial-gradient(circle at top right, #1a2a6c, #b21f1f, #fdbb2d);
+  align-items: center;
+  text-align: center;
+}
+
+.story-distance .header-group {
+  margin-top: 100px;
+}
+
+.story-distance h1 {
+  font-size: 5rem;
+  font-weight: 800;
+  margin: 0;
+  line-height: 1.1;
+  text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.story-distance .subline {
+  font-size: 2.5rem;
+  margin-top: 40px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.story-distance .distance-hero {
+  font-size: 14rem;
+  font-weight: 900;
+  margin: 60px 0;
+  background: linear-gradient(180deg, #fff, #ddd);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.5));
+}
+
+.story-distance .map-visual {
+  position: relative;
+  width: 100%;
+  height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  margin: 60px 0;
+}
+
+.story-distance .path-line {
+  position: absolute;
+  top: 50%;
+  left: 10%;
+  width: 80%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.story-distance .runner-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* Dynamic */
+  transform: translate(-50%, -50%);
+  font-size: 4rem;
+  background: white;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+}
+
+.story-distance .city-pin {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 15px 30px;
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+  position: relative;
+  z-index: 2;
+  font-weight: 700;
+  font-size: 1.5rem;
+}
+
+.story-distance .comparison-text {
+  font-size: 2rem;
+  max-width: 80%;
+  line-height: 1.4;
+  margin-top: 20px;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 30px;
+  border-radius: 30px;
+}
+
+.story-distance .progress-container {
+  margin-top: auto;
+  margin-bottom: 150px;
+  width: 80%;
+  text-align: center;
+}
+
+/* --- Story 2: Elevation --- */
+.story-elevation {
+  background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+  align-items: center;
+  text-align: center;
+}
+
+.story-elevation h1 {
+  font-size: 5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 100px;
+}
+
+.story-elevation .elevation-hero {
+  font-size: 10rem;
+  font-weight: 900;
+  color: #4facfe;
+  margin: 20px 0;
+}
+
+.story-elevation .mountain-visual {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  margin-top: 40px;
+}
+
+.story-elevation .mountain {
+  width: 0;
+  height: 0;
+  border-left: 300px solid transparent;
+  border-right: 300px solid transparent;
+  border-bottom: 500px solid rgba(255, 255, 255, 0.1);
+  position: absolute;
+  bottom: 0;
+}
+
+.story-elevation .mountain.everest {
+  border-bottom-color: #4facfe;
+  transform: scale(1.1);
+  z-index: 2;
+  border-bottom: 500px solid #4facfe;
+  filter: drop-shadow(0 0 50px rgba(79, 172, 254, 0.4));
+}
+
+.story-elevation .comparison-bubble {
+  background: white;
+  color: #111;
+  padding: 30px 50px;
+  border-radius: 50px;
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-top: 60px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.story-elevation .stats-row {
+  display: flex;
+  gap: 40px;
+  margin-top: auto;
+  margin-bottom: 120px;
+}
+
+.story-elevation .stat-box {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 30px;
+  border-radius: 20px;
+}
+
+.story-elevation .stat-box .label {
+  font-size: 1.2rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.story-elevation .stat-box .value {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
+/* --- Story 3: Time & Calories --- */
+.story-time {
+  background: #111;
+  display: flex;
+  flex-direction: row;
+  /* Split Layout attempt, but prompt said vertical */
+  /* Actually prompt said "Split layout: left side ... right side". Stories are vertical.
+     Maybe split Top/Bottom or Left/Right? Left/Right on 1080 width is tight.
+     Let's do Top/Bottom split for "Time" vs "Calories" which fits strict vertical flow better,
+     OR strictly Left/Right split (540px each). Let's do Left/Right. */
+  flex-direction: row;
+  padding: 0;
+}
+
+.story-time .split-pane {
+  width: 50%;
+  height: 100%;
+  padding: 60px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.story-time .pane-left {
+  background: #1a1a1a;
+  color: #00f260;
+}
+
+.story-time .pane-right {
+  background: #f8f9fa;
+  color: #111;
+}
+
+.story-time .icon-hero {
+  font-size: 8rem;
+  margin-bottom: 40px;
+}
+
+.story-time h2 {
+  font-size: 3rem;
+  font-weight: 900;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.story-time .value-hero {
+  font-size: 6rem;
+  font-weight: 800;
+  margin: 20px 0;
+}
+
+.story-time .comparison-note {
+  font-size: 1.5rem;
+  line-height: 1.4;
+  opacity: 0.8;
+  margin-top: 20px;
+  font-weight: 600;
+}
+
+.story-time .food-visual {
+  font-size: 6rem;
+  margin: 30px 0;
+  animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-20px);
+  }
+}

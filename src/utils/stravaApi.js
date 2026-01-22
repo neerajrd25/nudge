@@ -56,17 +56,28 @@ export const refreshAccessToken = async (refreshToken) => {
   }
 };
 
-// Get athlete activities
-export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) => {
+// Get athlete activities with optional range
+export const getAthleteActivities = async (accessToken, page = 1, perPage = 30, after = null, before = null) => {
   try {
+    const params = { page, per_page: perPage };
+    
+    const toUnix = (val) => {
+      if (!val) return null;
+      if (typeof val === 'number') return val;
+      return Math.floor(new Date(val).getTime() / 1000);
+    };
+
+    const afterSec = toUnix(after);
+    const beforeSec = toUnix(before);
+    
+    if (afterSec) params.after = afterSec;
+    if (beforeSec) params.before = beforeSec;
+
     const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
-      params: {
-        page,
-        per_page: perPage,
-      },
+      params,
     });
     return response.data;
   } catch (error) {
@@ -75,110 +86,30 @@ export const getAthleteActivities = async (accessToken, page = 1, perPage = 30) 
   }
 };
 
-// Get athlete activities for the last 3 months
-export const getAthleteActivitiesLast3Months = async (accessToken) => {
-  // Convenience wrapper that delegates to getAthleteActivitiesSince
-  try {
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const afterTimestamp = Math.floor(threeMonthsAgo.getTime() / 1000);
-    return await getAthleteActivitiesSince(accessToken, afterTimestamp);
-  } catch (error) {
-    console.error('Error fetching last 3 months activities:', error);
-    throw error;
-  }
-};
-
-// Helper sleep
-const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-
-/**
- * Fetch athlete activities since a given unix timestamp (seconds).
- * Handles pagination and basic rate limit (429) backoff / Retry-After header.
- */
-export const getAthleteActivitiesSince = async (
-  accessToken,
-  afterTimestamp,
-  perPage = 100
-) => {
+// Get athlete activities since a given Unix timestamp (seconds). If afterSec is null, behaves like getAllAthleteActivities
+export const getAthleteActivitiesSince = async (accessToken, afterSec = null) => {
   try {
     let allActivities = [];
     let page = 1;
-    let hasMoreData = true;
+    const perPage = 200;
+    let hasMore = true;
 
-    // We'll do retries with exponential backoff for transient 429/5xx errors
-    const maxRetries = 5;
+    while (hasMore) {
+      const params = { page, per_page: perPage };
+      if (afterSec) params.after = afterSec;
 
-    while (hasMoreData) {
-      let attempt = 0;
-      let response = null;
+      const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params,
+      });
 
-      while (attempt <= maxRetries) {
-        try {
-          response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-            params: {
-              after: afterTimestamp,
-              page,
-              per_page: perPage,
-            },
-            validateStatus: (status) => true, // we'll handle statuses manually
-          });
-
-          // Handle rate limit
-          if (response.status === 429) {
-            const retryAfter = parseInt(response.headers['retry-after']) || null;
-            const backoffMs = retryAfter ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
-            console.warn(`Strava rate limit hit (429). Backing off for ${backoffMs}ms (attempt ${attempt + 1})`);
-            await sleep(backoffMs);
-            attempt++;
-            continue;
-          }
-
-          // Handle server errors with backoff
-          if (response.status >= 500 && response.status < 600) {
-            const backoffMs = Math.pow(2, attempt) * 1000;
-            console.warn(`Strava server error ${response.status}. Backing off ${backoffMs}ms (attempt ${attempt + 1})`);
-            await sleep(backoffMs);
-            attempt++;
-            continue;
-          }
-
-          // For 401/403 treat as auth error
-          if (response.status === 401 || response.status === 403) {
-            const err = new Error(`Authentication error when calling Strava API: ${response.status}`);
-            err.response = response;
-            throw err;
-          }
-
-          // If we reach here and response is OK (200)
-          if (response.status === 200) break;
-
-          // For other 4xx errors, throw
-          const err = new Error(`Unexpected response from Strava API: ${response.status}`);
-          err.response = response;
-          throw err;
-        } catch (err) {
-          if (attempt >= maxRetries) throw err;
-          const backoffMs = Math.pow(2, attempt) * 1000;
-          console.warn(`Error fetching activities (attempt ${attempt + 1}): ${err.message}. Backing off ${backoffMs}ms`);
-          await sleep(backoffMs);
-          attempt++;
-        }
-      }
-
-      if (!response) break; // safety
-
-      const activities = response.data || [];
-
-      if (!Array.isArray(activities) || activities.length === 0) {
-        hasMoreData = false;
+      const activities = response.data;
+      if (!activities || activities.length === 0) {
+        hasMore = false;
       } else {
         allActivities = allActivities.concat(activities);
         if (activities.length < perPage) {
-          hasMoreData = false;
+          hasMore = false;
         } else {
           page++;
           // Gentle delay between pages to reduce chance of rate limiting
@@ -189,7 +120,47 @@ export const getAthleteActivitiesSince = async (
 
     return allActivities;
   } catch (error) {
-    console.error('Error fetching activities since timestamp:', error);
+    console.error('Error fetching athlete activities since:', error);
+    throw error;
+  }
+};
+
+// Get athlete activities for the last 3 months
+// NOTE: The 3-month-specific activity fetch was removed. Use `getAllAthleteActivities`
+// or `getAthleteActivities` for targeted queries.
+
+// Get ALL athlete activities (paginated) from Strava
+export const getAllAthleteActivities = async (accessToken) => {
+  try {
+    let allActivities = [];
+    let page = 1;
+    const perPage = 200; // keep a reasonably large page size
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { page, per_page: perPage },
+      });
+
+      const activities = response.data;
+      if (!activities || activities.length === 0) {
+        hasMore = false;
+      } else {
+        allActivities = allActivities.concat(activities);
+        if (activities.length < perPage) {
+          hasMore = false;
+        } else {
+          page++;
+          // Gentle delay between pages to reduce chance of rate limiting
+          await sleep(250);
+        }
+      }
+    }
+
+    return allActivities;
+  } catch (error) {
+    console.error('Error fetching all athlete activities:', error);
     throw error;
   }
 };
@@ -220,6 +191,21 @@ export const getAthleteStats = async (accessToken, athleteId) => {
     return response.data;
   } catch (error) {
     console.error('Error fetching athlete stats:', error);
+    throw error;
+  }
+};
+
+// Get detailed activity (includes best efforts)
+export const getActivityById = async (accessToken, activityId) => {
+  try {
+    const response = await axios.get(`${STRAVA_API_BASE}/activities/${activityId}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching activity details:', error);
     throw error;
   }
 };
