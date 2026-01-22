@@ -610,7 +610,7 @@ function Activities() {
         <Paper withBorder p="md" radius="md" bg="var(--mantine-color-red-light)">
           <Text c="red" ta="center">{error}</Text>
           <Group justify="center" mt="sm">
-            <Button size="xs" variant="outline" color="red" onClick={loadActivities}>Retry</Button>
+            <Button size="xs" variant="outline" color="red" onClick={loadActivitiesFromFirebase}>Retry</Button>
           </Group>
         </Paper>
       )}

@@ -26,6 +26,7 @@ import {
   syncActivitiesAndComputeKPIs,
   getKPIsForAthlete,
 } from '../utils/firebaseService';
+import { useEffect, useState } from 'react';
 
 function AdminPanel() {
   const [loading, setLoading] = useState(false);

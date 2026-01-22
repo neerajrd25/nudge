@@ -2,7 +2,7 @@ import { AppShell, Container, Group, Text, Box, Button, rem, Stack } from '@mant
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
-export function PublicLayout({ children }) {
+export function PublicLayout({ children, fullWidth = false }) {
   const navigate = useNavigate();
   const { login } = useAuth();
 
@@ -47,9 +47,15 @@ export function PublicLayout({ children }) {
       </AppShell.Header>
 
       <AppShell.Main bg="midnight.8" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <Container size="xl" py="md" style={{ flex: 1, width: '100%' }}>
-          {children}
-        </Container>
+        {fullWidth ? (
+          <Box style={{ flex: 1, width: '100%' }}>
+            {children}
+          </Box>
+        ) : (
+          <Container size="xl" py="md" style={{ flex: 1, width: '100%' }}>
+            {children}
+          </Container>
+        )}
 
         <Box
           component="footer"

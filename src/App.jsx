@@ -50,7 +50,7 @@ function App() {
                 </Routes>
               </AppLayout>
             ) : (
-              <PublicLayout>
+              <PublicLayout fullWidth>
                 <Routes>
                   <Route path="/" element={<Landing />} />
                   <Route path="*" element={<Landing />} />

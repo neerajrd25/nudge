@@ -11,7 +11,6 @@ import {
   startAfter as firestoreStartAfter,
   limit as firestoreLimit,
 } from 'firebase/firestore';
-import { getDoc } from 'firebase/firestore';
 import { deleteDoc } from 'firebase/firestore';
 import { db, ensureAuthenticated } from './firebaseConfig';
 import { calculateTSS } from './metrics';
