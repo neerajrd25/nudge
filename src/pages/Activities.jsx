@@ -394,54 +394,7 @@ function Activities() {
     return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
   };
 
-  const refreshData = async () => {
-    setLoading(true);
-    setSyncStatus('Refreshing data from Strava...');
 
-    try {
-      const authData = getStoredAuthData();
-      if (!authData || !authData.accessToken) {
-        navigate('/');
-        return;
-      }
-
-      const syncResult = await autoSync(authData, 0, (progressMessage) => {
-        setSyncStatus(progressMessage);
-      });
-
-      if (syncResult) {
-        const athleteId = authData.athlete?.id;
-        const updatedActivities = await getActivitiesFromFirebase(String(athleteId));
-        setActivities(updatedActivities);
-        setLastSyncTime(syncResult.lastSyncTime);
-        setSyncStatus('✓ Data refreshed successfully');
-      }
-
-      setTimeout(() => setSyncStatus(null), 3000);
-    } catch (error) {
-      console.error('Refresh failed:', error);
-      setSyncStatus('⚠️ Refresh failed. Using cached data.');
-      setTimeout(() => setSyncStatus(null), 3000);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatLastSyncTime = (timeString) => {
-    if (!timeString) return 'Never';
-
-    const syncTime = new Date(timeString);
-    const now = new Date();
-    const diffMs = now - syncTime;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins} min ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-  };
 
   const getActivityIcon = (type) => {
     const typeLower = type.toLowerCase();

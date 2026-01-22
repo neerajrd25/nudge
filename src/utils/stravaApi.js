@@ -10,6 +10,8 @@ const getConfig = () => ({
   redirectUri: import.meta.env.VITE_STRAVA_REDIRECT_URI || 'http://localhost:5173/callback',
 });
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Generate Strava authorization URL
 export const getAuthorizationUrl = () => {
   const config = getConfig();
