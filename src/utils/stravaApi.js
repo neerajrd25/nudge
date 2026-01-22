@@ -152,6 +152,8 @@ export const getAllAthleteActivities = async (accessToken) => {
           hasMore = false;
         } else {
           page++;
+          // Gentle delay between pages to reduce chance of rate limiting
+          await sleep(250);
         }
       }
     }
