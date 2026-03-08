@@ -32,6 +32,7 @@ import {
   IconUser,
   IconSmartHome,
   IconChartLine,
+  IconMap2,
 } from "@tabler/icons-react";
 import { useAuth } from "../../context/AuthContext";
 
@@ -47,6 +48,7 @@ export function AppLayout({ children }) {
 
   const navLinks = [
     { label: "Intelligence", icon: IconSmartHome, path: "/", exact: true },
+    { label: "Footprint", icon: IconMap2, path: "/footprint" },
     { label: "Activities", icon: IconActivity, path: "/activities" },
     { label: "Training Plan", icon: IconCalendar, path: "/planner" },
     { label: "AI Coach", icon: IconMessageChatbot, path: "/chat" },

@@ -30,7 +30,8 @@ import {
   IconArrowLeft,
   IconClock,
   IconRuler2,
-  IconAward
+  IconAward,
+  IconCopy
 } from '@tabler/icons-react';
 import {
   getStoredAuthData,
@@ -83,6 +84,76 @@ function TrainingCalendar() {
     }
   };
 
+  const getWeekNumber = (date) => {
+    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
+    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  };
+
+  const getWeekRange = (date) => {
+    const curr = new Date(date);
+    const firstDay = curr.getDate() - curr.getDay() + 1; // Monday
+    const lastDay = firstDay + 6; // Sunday
+    
+    const monday = new Date(curr.setDate(firstDay));
+    monday.setHours(0, 0, 0, 0);
+    
+    const sunday = new Date(curr);
+    sunday.setDate(lastDay);
+    sunday.setHours(23, 59, 59, 999);
+    
+    return { start: monday, end: sunday };
+  };
+
+  const copyWeeklyData = async () => {
+    try {
+      const weekRange = getWeekRange(selectedDate);
+      const weekNumber = getWeekNumber(selectedDate);
+      
+      // Filter activities for the selected week
+      const weekActivities = activities.filter(act => {
+        const actDate = new Date(act.start_date);
+        return actDate >= weekRange.start && actDate <= weekRange.end;
+      });
+
+      // Sort by date
+      weekActivities.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+
+      // Generate CSV
+      const headers = 'Week,Date,Day,Activity Type,Race Type,Duration,Avg HR,Avg Pace,Avg Cadence,Avg Speed(If Cycling),Avg Power(If Cycling)';
+      const rows = weekActivities.map(act => {
+        const actDate = new Date(act.start_date);
+        const date = actDate.toISOString().split('T')[0];
+        const day = actDate.toLocaleDateString('en-US', { weekday: 'long' });
+        const duration = `${Math.floor(act.moving_time / 60)}:${String(act.moving_time % 60).padStart(2, '0')}`;
+        
+        // Calculate pace (min/km) for running/walking
+        const pace = (act.type === 'Run' || act.type === 'Walk') && act.distance > 0
+          ? `${Math.floor((act.moving_time / 60) / (act.distance / 1000))}:${String(Math.round(((act.moving_time / 60) / (act.distance / 1000) % 1) * 60)).padStart(2, '0')}`
+          : '';
+        
+        // Speed for cycling (km/h)
+        const speed = (act.type === 'Ride' && act.average_speed) 
+          ? (act.average_speed * 3.6).toFixed(2) 
+          : '';
+        
+        const power = (act.type === 'Ride' && act.average_watts) 
+          ? Math.round(act.average_watts) 
+          : '';
+        
+        return `${weekNumber},${date},${day},${act.type},,${duration},${act.average_heartrate || ''},${pace},${act.average_cadence || ''},${speed},${power}`;
+      });
+
+      const csvContent = [headers, ...rows].join('\n');
+      
+      await navigator.clipboard.writeText(csvContent);
+      alert(`Week ${weekNumber} data copied to clipboard! (${weekActivities.length} activities)`);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      alert('Failed to copy data to clipboard');
+    }
+  };
+
   const getSportIcon = (type) => {
     const icons = { Run: IconRun, Ride: IconBike, Swim: IconSwimming, Walk: IconWalk, Hike: IconMountain, Workout: IconBarbell };
     const Icon = icons[type] || IconBolt;
@@ -104,6 +175,17 @@ function TrainingCalendar() {
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
         <Paper withBorder p="xl" radius="lg" bg="midnight.9">
+          <Group justify="space-between" mb="md">
+            <Text size="sm" fw={600}>Select Date</Text>
+            <Button 
+              size="xs" 
+              variant="light" 
+              leftSection={<IconCopy size={16} />}
+              onClick={copyWeeklyData}
+            >
+              Copy Week Data
+            </Button>
+          </Group>
           <Calendar
             onChange={setSelectedDate}
             value={selectedDate}

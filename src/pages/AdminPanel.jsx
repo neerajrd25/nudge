@@ -25,6 +25,7 @@ import {
   deleteAllActivities,
   syncActivitiesAndComputeKPIs,
   getKPIsForAthlete,
+  recalculateAllActivityTSS,
 } from '../utils/firebaseService';
 import { useEffect, useState } from 'react';
 
@@ -199,6 +200,27 @@ function AdminPanel() {
     }
   };
 
+  const handleRecalculateTSS = async () => {
+    try {
+      setLoading(true);
+      setStatus('Recalculating TSS for all activities...');
+      setResult(null);
+
+      const { athlete } = await ensureAuthAndGetToken();
+      if (!athlete || !athlete.id) throw new Error('Athlete id not available');
+
+      const res = await recalculateAllActivityTSS(String(athlete.id));
+      setResult(res);
+      setStatus(`Recalculated TSS: ${res.count} updated (scanned ${res.totalScanned})`);
+    } catch (err) {
+      console.error('Recalculate TSS error:', err);
+      setResult({ success: false, message: err.message });
+      setStatus('Recalculation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchActivityCount().catch(() => { });
   }, []);
@@ -230,6 +252,9 @@ function AdminPanel() {
               </Button>
               <Button onClick={handleFullSyncWithKPIs} loading={loading} variant="filled">
                 Full Sync
+              </Button>
+              <Button onClick={handleRecalculateTSS} loading={loading} variant="filled" color="orange">
+                Recalculate TSS
               </Button>
             </Group>
 

@@ -93,7 +93,16 @@ export const calculateTSS = (activity, settings) => {
   // Fallback to RPE/Duration estimation (1hr Moderate = ~50 TSS)
   else {
     const durationHours = (activity.moving_time || 0) / 3600;
-    tss = Math.round(durationHours * 50);
+    const type = getActivityType(activity);
+    
+    // Baseline TSS per hour based on activity type
+    let tssPerHour = 50;
+    if (type === 'hike') tssPerHour = 25;
+    else if (type === 'swim') tssPerHour = 40;
+    else if (type === 'mobility' || type === 'rest') tssPerHour = 5;
+    else if (type === 'strength') tssPerHour = 35;
+    
+    tss = Math.round(durationHours * tssPerHour);
   }
 
   return isNaN(tss) ? 0 : tss;
@@ -250,6 +259,7 @@ export const getActivityType = (item) => {
   if (rawType.includes('swim')) return 'swim';
   if (rawType.includes('strength') || rawType.includes('weight') || rawType.includes('gym')) return 'strength';
   if (rawType.includes('yoga') || rawType.includes('mobility')) return 'mobility';
+  if (rawType.includes('hike') || rawType.includes('walk')) return 'hike';
   if (rawType.includes('rest')) return 'rest';
 
   const name = (item.plannedActivity || item.name || '').toLowerCase();
@@ -261,6 +271,7 @@ export const getActivityType = (item) => {
   if (combined.includes('swim')) return 'swim';
   if (combined.includes('strength') || combined.includes('gym') || combined.includes('lift') || combined.includes('weight')) return 'strength';
   if (combined.includes('mobility') || combined.includes('rehab') || combined.includes('yoga') || combined.includes('stretch')) return 'mobility';
+  if (combined.includes('hike') || combined.includes('hiking') || combined.includes('walk') || combined.includes('trek')) return 'hike';
   if (combined.includes('rest')) return 'rest';
   
   return 'run'; // Default
@@ -333,6 +344,15 @@ export const estimatePlannedTSS = (item) => {
       if (hasDistance) {
         baseTSSPerHour = 50 * (speed / refSpeed);
       }
+  } else if (type === 'hike') {
+    // Baseline: 4km/h ~ 25 TSS/hr
+    const refSpeed = 4;
+    baseTSSPerHour = 25;
+    
+    if (hasDistance) {
+       // Scale linearly: 6km/h -> 37.5 TSS/hr
+       baseTSSPerHour = 25 * (speed / refSpeed);
+    }
   } else if (type === 'strength') {
     baseTSSPerHour = 35;
   } else if (type === 'rest' || type === 'mobility') {

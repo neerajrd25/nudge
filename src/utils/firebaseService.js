@@ -14,6 +14,7 @@ import {
 import { deleteDoc } from 'firebase/firestore';
 import { db, ensureAuthenticated } from './firebaseConfig';
 import { calculateTSS } from './metrics';
+import { writeBatch } from 'firebase/firestore';
 
 /**
  * Store Strava activities in Firebase
@@ -614,6 +615,54 @@ export const updateAthleteSettings = async (athleteId, settings) => {
     return { success: true };
   } catch (error) {
     console.error('Error updating athlete settings:', error);
+    throw error;
+  }
+};
+/**
+ * Recalculate TSS for all activities in Firebase using the latest logic
+ * @param {string} athleteId
+ * @returns {Promise<Object>} result with count
+ */
+export const recalculateAllActivityTSS = async (athleteId) => {
+  if (!db) throw new Error('Firebase is not initialized.');
+  try {
+    await ensureAuthenticated();
+    
+    // Get all activities
+    const activities = await getActivitiesFromFirebase(athleteId, 2000); // Fetch up to 2000
+    const settings = await getAthleteSettings(athleteId);
+    
+    let updatedCount = 0;
+    const batchSize = 500;
+    
+    // Process in batches
+    for (let i = 0; i < activities.length; i += batchSize) {
+      const batch = writeBatch(db);
+      const chunk = activities.slice(i, i + batchSize);
+      let changesInBatch = 0;
+      
+      chunk.forEach(activity => {
+        const newTSS = calculateTSS(activity, settings);
+        // Only update if TSS has changed significantly (or if it was missing)
+        if (Math.abs((activity.tss || 0) - newTSS) > 1 || activity.tss === undefined) {
+          const docRef = doc(db, 'athletes', String(athleteId), 'activities', String(activity.id));
+          batch.update(docRef, { 
+            tss: newTSS,
+            updated_at: Timestamp.now()
+          });
+          changesInBatch++;
+          updatedCount++;
+        }
+      });
+      
+      if (changesInBatch > 0) {
+        await batch.commit();
+      }
+    }
+
+    return { success: true, count: updatedCount, totalScanned: activities.length };
+  } catch (error) {
+    console.error('Error recalculating TSS:', error);
     throw error;
   }
 };

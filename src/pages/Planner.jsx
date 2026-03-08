@@ -22,7 +22,7 @@ import {
 } from '@mantine/core';
 import { getPlannedWorkouts, savePlannedWorkout, importPlannedWorkouts, deletePlannedWorkout, unlinkActivityFromWorkout } from '../utils/plannerService';
 import { getActivitiesByDateRange } from '../utils/firebaseService';
-import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink } from '@tabler/icons-react';
+import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink, IconCopy } from '@tabler/icons-react';
 import { getStoredAuthData, getAthleteActivities, isTokenExpired, refreshAccessToken, storeAuthData } from '../utils/stravaApi';
 import { calculateTSS, getActivityType, estimatePlannedTSS } from '../utils/metrics';
 
@@ -136,6 +136,7 @@ const Planner = ({ initialDate = new Date() }) => {
   const [currentMonth, setCurrentMonth] = useState(initialDate);
   const [plannerItems, setPlannerItems] = useState([]);
   const [actualActivities, setActualActivities] = useState([]);
+  const [rawStravaData, setRawStravaData] = useState([]);
   const [viewMode, setViewMode] = useState('all'); // 'planned', 'actual', 'all'
   const { width } = useViewportSize();
   const isMobile = width > 0 && width < 768;
@@ -176,6 +177,7 @@ const Planner = ({ initialDate = new Date() }) => {
 
         // Fetch Actual from Firebase
         const strava = await getActivitiesByDateRange(athleteId, fetchStart, fetchEnd);
+        setRawStravaData(strava); // Store raw data for CSV export
         const transformed = strava.map(act => ({
           id: `strava-${act.id}`,
           plannedActivity: act.name,
@@ -206,6 +208,119 @@ const Planner = ({ initialDate = new Date() }) => {
   const handlePrevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
   const handleNextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
   const handleToday = () => setCurrentMonth(new Date());
+
+  const getWeekNumber = (date) => {
+    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
+    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  };
+
+  const getWeekRange = (date) => {
+    const curr = new Date(date);
+    const firstDay = curr.getDate() - curr.getDay() + 1; // Monday
+    const lastDay = firstDay + 6; // Sunday
+    
+    const monday = new Date(curr.setDate(firstDay));
+    monday.setHours(0, 0, 0, 0);
+    
+    const sunday = new Date(curr);
+    sunday.setDate(lastDay);
+    sunday.setHours(23, 59, 59, 999);
+    
+    return { start: monday, end: sunday };
+  };
+
+  const copyWeeklyData = async (week, weekIndex) => {
+    try {
+      // Get valid days from the week array (filter out null values)
+      const validDays = week.filter(day => day !== null);
+      if (validDays.length === 0) return;
+      
+      // Create date strings for all days in this week for matching
+      const weekDateKeys = validDays.map(day => formatDateKey(day));
+      const firstValidDay = validDays[0];
+      const weekNumber = getWeekNumber(firstValidDay);
+      
+      // Filter activities for the selected week - only actual Strava activities
+      // Match by checking if the activity date matches any date in this week
+      const weekActivities = rawStravaData.filter(act => {
+        const actDate = new Date(act.start_date_local || act.start_date);
+        const actDateKey = formatDateKey(actDate);
+        return weekDateKeys.includes(actDateKey);
+      });
+
+      // Debug: Log first cycling activity to see available power fields
+      const cyclingActivity = weekActivities.find(act => 
+        act.type === 'Ride' || act.type === 'VirtualRide' || 
+        act.sport_type === 'Ride' || act.sport_type === 'VirtualRide'
+      );
+      if (cyclingActivity) {
+        console.log('Cycling activity power fields:', {
+          average_watts: cyclingActivity.average_watts,
+          weighted_average_watts: cyclingActivity.weighted_average_watts,
+          device_watts: cyclingActivity.device_watts,
+          has_heartrate: !!cyclingActivity.has_heartrate,
+          all_keys: Object.keys(cyclingActivity).filter(k => k.includes('watt') || k.includes('power'))
+        });
+      }
+
+      // Sort by date
+      weekActivities.sort((a, b) => {
+        const dateA = new Date(a.start_date_local || a.start_date);
+        const dateB = new Date(b.start_date_local || b.start_date);
+        return dateA - dateB;
+      });
+
+      // Generate CSV
+      const headers = 'Week,Date,Day,Activity Type,Duration,Avg HR,Avg Pace,Avg Cadence,Avg Speed(If Cycling),Avg Power(If Cycling),Elevation Gain(m)';
+      const rows = weekActivities.map(act => {
+        const actDate = new Date(act.start_date_local || act.start_date);
+        const date = actDate.toISOString().split('T')[0];
+        const day = actDate.toLocaleDateString('en-US', { weekday: 'long' });
+        const durationMinutes = Math.floor((act.moving_time || 0) / 60);
+        const durationSeconds = (act.moving_time || 0) % 60;
+        const duration = `${durationMinutes}:${String(durationSeconds).padStart(2, '0')}`;
+        
+        // Calculate pace (min/km) for running/walking
+        const isRunWalk = (act.type === 'Run' || act.type === 'Walk' || act.sport_type === 'Run' || act.sport_type === 'Walk');
+        const pace = isRunWalk && act.distance > 0
+          ? (() => {
+              const paceMinPerKm = (act.moving_time / 60) / (act.distance / 1000);
+              const paceMin = Math.floor(paceMinPerKm);
+              const paceSec = Math.round((paceMinPerKm % 1) * 60);
+              return `${paceMin}:${String(paceSec).padStart(2, '0')}`;
+            })()
+          : '';
+        
+        // Speed for cycling (km/h) - includes both outdoor and virtual rides
+        const isCycling = (act.type === 'Ride' || act.type === 'VirtualRide' || act.sport_type === 'Ride' || act.sport_type === 'VirtualRide');
+        const speed = isCycling && act.average_speed
+          ? (act.average_speed * 3.6).toFixed(2)
+          : '';
+        
+        // Power for cycling (watts) - check multiple possible fields
+        const power = isCycling && (act.weighted_average_watts || act.average_watts || act.device_watts)
+          ? Math.round(act.weighted_average_watts || act.average_watts || act.device_watts)
+          : '';
+        
+        const avgHr = act.average_heartrate ? Math.round(act.average_heartrate) : '';
+        const avgCadence = act.average_cadence ? Math.round(act.average_cadence * (isCycling ? 2 : 1)) : '';
+        
+        // Elevation gain in meters
+        const elevation = act.total_elevation_gain ? Math.round(act.total_elevation_gain) : '';
+        
+        return `${weekNumber},${date},${day},${act.type || act.sport_type},${duration},${avgHr},${pace},${avgCadence},${speed},${power},${elevation}`;
+      });
+
+      const csvContent = [headers, ...rows].join('\n');
+      
+      await navigator.clipboard.writeText(csvContent);
+      alert(`Week ${weekNumber} data copied to clipboard! (${weekActivities.length} activities)`);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      alert('Failed to copy data to clipboard');
+    }
+  };
 
   const handleAddWorkout = async () => {
     if (!athleteId || !newWorkout.plannedActivity || !newWorkout.date) return;
@@ -617,6 +732,16 @@ const Planner = ({ initialDate = new Date() }) => {
                       >
                         {Math.round((totals.completed / totals.total) * 100)}% ✓
                       </Badge>
+                      <Button
+                        variant="light"
+                        size="xs"
+                        leftSection={<IconCopy size={14} />}
+                        onClick={() => copyWeeklyData(week, wIdx)}
+                        fullWidth
+                        mt="xs"
+                      >
+                        Copy
+                      </Button>
                     </Stack>
                   )}
                 </Box>

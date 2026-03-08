@@ -11,6 +11,7 @@ import Planner from './pages/Planner';
 import PlannerDemo from './pages/PlannerDemo';
 import AthleteSettings from './pages/AthleteSettings';
 import Charts from './pages/Charts';
+import Footprint from './pages/Footprint';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import './App.css';
 import { AppLayout } from './components/layout/AppLayout';
@@ -44,6 +45,7 @@ function App() {
                   <Route path="/chat" element={<Chat />} />
                   <Route path="/charts" element={<Charts />} />
                   <Route path="/prs" element={<PersonalRecords />} />
+                  <Route path="/footprint" element={<Footprint />} />
                   <Route path="/admin" element={<AdminPanel />} />
                   <Route path="/year-stats" element={<YearStats />} />
                   <Route path="/settings" element={<AthleteSettings />} />
