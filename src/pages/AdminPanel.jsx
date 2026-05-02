@@ -254,7 +254,7 @@ function AdminPanel() {
                 Full Sync
               </Button>
               <Button onClick={handleRecalculateTSS} loading={loading} variant="filled" color="orange">
-                Recalculate TSS
+                Recalculate Load
               </Button>
             </Group>
 

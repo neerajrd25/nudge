@@ -594,7 +594,7 @@ function Activities() {
                               </Badge>
                             )}
                             {activity.tss && (
-                              <Badge variant="filled" color="blue" size="sm" radius="sm">TSS {activity.tss}</Badge>
+                              <Badge variant="filled" color="blue" size="sm" radius="sm">Load {activity.tss}</Badge>
                             )}
                           </Group>
                         </Box>

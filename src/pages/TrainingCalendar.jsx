@@ -242,7 +242,7 @@ function TrainingCalendar() {
                 <Stack gap={0}>
                   <Text size="xs" c="dimmed" fw={900} tt="uppercase">Training Load</Text>
                   <Text size="xl" fw={900} c="blue">
-                    {selectedActivities.reduce((sum, a) => sum + (a.tss || 0), 0)} TSS
+                    {selectedActivities.reduce((sum, a) => sum + (a.tss || 0), 0)} Load
                   </Text>
                 </Stack>
                 <Stack gap={0}>

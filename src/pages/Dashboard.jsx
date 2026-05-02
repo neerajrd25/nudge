@@ -364,7 +364,7 @@ export function Dashboard() {
           <Title order={3} mt="xl" mb="md">Weekly Progress</Title>
           <Paper withBorder p="lg" radius="lg" bg="midnight.9">
             <Group justify="space-between" mb="xs">
-              <Text fw={700}>Weekly TSS Target</Text>
+              <Text fw={700}>Weekly Load Target</Text>
               <Text fw={900} c="blue">{loadingMetrics ? "..." : `${weeklyTSS.current} / ${weeklyTSS.target}`}</Text>
             </Group>
             <Box h={12} bg="midnight.7" style={{ borderRadius: 6, overflow: 'hidden' }}>
@@ -424,7 +424,27 @@ export function Dashboard() {
                           <Text fw={900} size="sm">
                             {item.raceType === 'A' && '🏆 '}{item.plannedActivity}
                           </Text>
-                          <Text size="xs" c="dimmed" lineClamp={1}>{item.details}</Text>
+                          {item.details && (
+                            <Text
+                              size="xs"
+                              c="dimmed"
+                              style={{
+                                whiteSpace: 'pre-line',
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {item.details}
+                            </Text>
+                          )}
+                          {item.focus && (
+                            <Text size="xs" c="gray.3" style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>
+                              Focus: {item.focus}
+                            </Text>
+                          )}
                         </Stack>
                       </Group>
 

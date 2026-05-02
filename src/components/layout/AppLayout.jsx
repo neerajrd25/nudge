@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   AppShell,
   Box,
@@ -38,6 +38,7 @@ import { useAuth } from "../../context/AuthContext";
 
 export function AppLayout({ children }) {
   const [opened, { toggle }] = useDisclosure();
+  const [desktopNavbarCollapsed, setDesktopNavbarCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { athlete, logout, login } = useAuth();
@@ -68,9 +69,9 @@ export function AppLayout({ children }) {
     <AppShell
       header={{ height: 60 }}
       navbar={{
-        width: 250,
+        width: desktopNavbarCollapsed ? 78 : 250,
         breakpoint: "sm",
-        collapsed: { mobile: !opened, desktop: false },
+        collapsed: { mobile: !opened, desktop: desktopNavbarCollapsed },
       }}
       padding="md"
     >
@@ -84,6 +85,12 @@ export function AppLayout({ children }) {
               opened={opened}
               onClick={toggle}
               hiddenFrom="sm"
+              size="sm"
+            />
+            <Burger
+              opened={!desktopNavbarCollapsed}
+              onClick={() => setDesktopNavbarCollapsed((prev) => !prev)}
+              visibleFrom="sm"
               size="sm"
             />
             <Box
@@ -175,50 +182,73 @@ export function AppLayout({ children }) {
         <AppShell.Section grow px="xs">
           <Stack gap={4}>
             {navLinks.map((link) => (
-              <NavLink
+              <Tooltip
                 key={link.path}
                 label={link.label}
-                leftSection={<link.icon size="1.2rem" stroke={1.5} />}
-                onClick={() => {
-                  navigate(link.path);
-                  if (opened) toggle();
-                }}
-                active={
-                  location.pathname === link.path ||
-                  (link.exact === false &&
-                    location.pathname.startsWith(link.path))
-                }
-                color="blue"
-                variant="filled"
+                position="right"
+                disabled={!desktopNavbarCollapsed}
+              >
+                <NavLink
+                  label={desktopNavbarCollapsed ? null : link.label}
+                  leftSection={<link.icon size="1.2rem" stroke={1.5} />}
+                  onClick={() => {
+                    navigate(link.path);
+                    if (opened) toggle();
+                  }}
+                  active={
+                    location.pathname === link.path ||
+                    (link.exact === false &&
+                      location.pathname.startsWith(link.path))
+                  }
+                  color="blue"
+                  variant="filled"
+                  styles={{
+                    root: {
+                      borderRadius: rem(8),
+                      marginBottom: rem(2),
+                    },
+                    section: {
+                      marginRight: desktopNavbarCollapsed ? 0 : undefined,
+                    },
+                    label: {
+                      fontWeight: 600,
+                    },
+                  }}
+                />
+              </Tooltip>
+            ))}
+
+            <Divider
+              my="sm"
+              label={desktopNavbarCollapsed ? null : "Utility"}
+              labelPosition="center"
+            />
+
+            <Tooltip
+              label={adminLink.label}
+              position="right"
+              disabled={!desktopNavbarCollapsed}
+            >
+              <NavLink
+                label={desktopNavbarCollapsed ? null : adminLink.label}
+                leftSection={<adminLink.icon size="1.2rem" stroke={1.5} />}
+                onClick={() => navigate(adminLink.path)}
+                active={location.pathname === adminLink.path}
+                variant="subtle"
+                color="red"
                 styles={{
-                  root: {
-                    borderRadius: rem(8),
-                    marginBottom: rem(2),
-                  },
-                  label: {
-                    fontWeight: 600,
+                  root: { borderRadius: rem(8) },
+                  section: {
+                    marginRight: desktopNavbarCollapsed ? 0 : undefined,
                   },
                 }}
               />
-            ))}
-
-            <Divider my="sm" label="Utility" labelPosition="center" />
-
-            <NavLink
-              label={adminLink.label}
-              leftSection={<adminLink.icon size="1.2rem" stroke={1.5} />}
-              onClick={() => navigate(adminLink.path)}
-              active={location.pathname === adminLink.path}
-              variant="subtle"
-              color="red"
-              styles={{
-                root: { borderRadius: rem(8) },
-              }}
-            />
+            </Tooltip>
           </Stack>
         </AppShell.Section>
 
-        <AppShell.Section p="md">
+        {!desktopNavbarCollapsed && (
+          <AppShell.Section p="md">
           <Box
             p="md"
             bg="electric.8"
@@ -256,7 +286,8 @@ export function AppLayout({ children }) {
               }}
             />
           </Box>
-        </AppShell.Section>
+          </AppShell.Section>
+        )}
       </AppShell.Navbar>
 
       <AppShell.Main

@@ -9,6 +9,7 @@ import {
   Button,
   Select,
   TextInput,
+  Textarea,
   NumberInput,
   Modal,
   Box,
@@ -22,18 +23,18 @@ import {
 } from '@mantine/core';
 import { getPlannedWorkouts, savePlannedWorkout, importPlannedWorkouts, deletePlannedWorkout, unlinkActivityFromWorkout } from '../utils/plannerService';
 import { getActivitiesByDateRange } from '../utils/firebaseService';
-import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink, IconCopy } from '@tabler/icons-react';
+import { IconUpload, IconTrash, IconArrowsMove, IconRun, IconBike, IconBarbell, IconYoga, IconPool, IconMoon, IconBrandStrava, IconCalendar, IconUnlink, IconCopy, IconCheck } from '@tabler/icons-react';
 import { getStoredAuthData, getAthleteActivities, isTokenExpired, refreshAccessToken, storeAuthData } from '../utils/stravaApi';
 import { calculateTSS, getActivityType, estimatePlannedTSS } from '../utils/metrics';
 
 const ACTIVITY_CONFIG = {
-  run: { color: 'red.7', icon: <IconRun size={14} />, gradient: 'linear-gradient(45deg, #FF6B6B 0%, #D6336C 100%)' },
-  cycle: { color: 'blue.7', icon: <IconBike size={14} />, gradient: 'linear-gradient(45deg, #4DABF7 0%, #339AF0 100%)' },
-  swim: { color: 'cyan.7', icon: <IconPool size={14} />, gradient: 'linear-gradient(45deg, #20C997 0%, #08979C 100%)' },
-  strength: { color: 'violet.7', icon: <IconBarbell size={14} />, gradient: 'linear-gradient(45deg, #845EF7 0%, #7048E8 100%)' },
-  mobility: { color: 'teal.7', icon: <IconYoga size={14} />, gradient: 'linear-gradient(45deg, #12B886 0%, #0CA678 100%)' },
-  rest: { color: 'gray.7', icon: <IconMoon size={14} />, gradient: 'linear-gradient(45deg, #868E96 0%, #495057 100%)' },
-  workout: { color: 'indigo.7', icon: <IconBarbell size={14} />, gradient: 'linear-gradient(45deg, #5C7CFA 0%, #4263EB 100%)' },
+  run: { color: 'red.7', icon: <IconRun size={14} /> },
+  cycle: { color: 'blue.7', icon: <IconBike size={14} /> },
+  swim: { color: 'cyan.7', icon: <IconPool size={14} /> },
+  strength: { color: 'violet.7', icon: <IconBarbell size={14} /> },
+  mobility: { color: 'teal.7', icon: <IconYoga size={14} /> },
+  rest: { color: 'gray.7', icon: <IconMoon size={14} /> },
+  workout: { color: 'indigo.7', icon: <IconBarbell size={14} /> },
 };
 
 function groupByDate(items) {
@@ -42,6 +43,70 @@ function groupByDate(items) {
     acc[item.date].push(item);
     return acc;
   }, {});
+}
+
+function parseCsvRows(csvText) {
+  const rows = [];
+  let currentRow = [];
+  let currentCell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      currentRow.push(currentCell);
+      currentCell = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') i++;
+      currentRow.push(currentCell);
+      const hasContent = currentRow.some(cell => String(cell).trim() !== '');
+      if (hasContent) rows.push(currentRow);
+      currentRow = [];
+      currentCell = '';
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell);
+    const hasContent = currentRow.some(cell => String(cell).trim() !== '');
+    if (hasContent) rows.push(currentRow);
+  }
+
+  return rows;
+}
+
+function normalizeHeader(header) {
+  return String(header || '')
+    .toLowerCase()
+    .replace(/[\/_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseNumericCell(value) {
+  if (value === undefined || value === null) return null;
+  const matched = String(value).trim().match(/-?\d+(?:\.\d+)?/);
+  if (!matched) return null;
+  const parsed = Number(matched[0]);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 
@@ -435,47 +500,76 @@ const Planner = ({ initialDate = new Date() }) => {
 
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const text = e.target.result;
-      const lines = text.split('\n');
-      const headers = lines[0].split(',');
-      const workouts = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-
-        // Basic CSV parsing (handles simple cases without commas in quotes)
-        const currentline = lines[i].split(',');
-        const workout = {};
-
-        // Expected columns: Week,Date,Day,Activity Type,Race Type,Details,Focus
-        // Mapping:
-        // Index 1: Date
-        // Index 3: Activity Type -> plannedActivity
-        // Index 4: Race Type -> raceType
-        // Index 5: Details -> details
-        // Index 6: Focus -> focus
-
-        workout.date = currentline[1]?.trim();
-        workout.plannedActivity = currentline[3]?.trim();
-        workout.raceType = currentline[4]?.trim();
-        workout.details = currentline[5]?.trim();
-        workout.focus = currentline[6]?.trim();
-        workout.activityType = getActivityType({ plannedActivity: workout.plannedActivity, details: workout.details });
-
-        // Extract duration from details (e.g. "30m", "45m")
-        const durationMatch = workout.details?.match(/(\d+)\s*m/);
-        workout.plannedDuration = durationMatch ? parseInt(durationMatch[1]) : 60;
-
-        // Extract distance from details (e.g. "10km", "5km")
-        const distanceMatch = workout.details?.match(/(\d+(?:\.\d+)?)\s*km/);
-        workout.plannedDistance = distanceMatch ? parseFloat(distanceMatch[1]) : null;
-
-        if (workout.date && workout.plannedActivity) {
-          workouts.push(workout);
+      try {
+        const text = e.target.result;
+        const rows = parseCsvRows(text);
+        if (rows.length < 2) {
+          alert('CSV must contain a header row and at least one data row.');
+          return;
         }
-      }
 
-      if (workouts.length > 0) {
+        const headers = rows[0].map(normalizeHeader);
+        const findColumnIndex = (aliases) => {
+          for (const alias of aliases) {
+            const index = headers.indexOf(normalizeHeader(alias));
+            if (index !== -1) return index;
+          }
+          return -1;
+        };
+
+        const dateIdx = findColumnIndex(['Date']);
+        const activityIdx = findColumnIndex(['Activity Type', 'Activity']);
+        const raceTypeIdx = findColumnIndex(['Race Type']);
+        const detailsIdx = findColumnIndex(['Details', 'Distance/Details']);
+        const focusIdx = findColumnIndex(['Focus']);
+        const plannedDurationIdx = findColumnIndex(['Planned Duration', 'Duration']);
+        const plannedDistanceIdx = findColumnIndex(['Planned Distance', 'Distance']);
+
+        if (dateIdx === -1 || activityIdx === -1) {
+          alert('Missing required CSV columns. Required: Date and Activity Type (or Activity).');
+          return;
+        }
+
+        const workouts = [];
+        let skippedRows = 0;
+
+        for (let i = 1; i < rows.length; i++) {
+          const currentline = rows[i];
+          const workout = {};
+
+          workout.date = currentline[dateIdx]?.trim();
+          workout.plannedActivity = currentline[activityIdx]?.trim();
+
+          const raceTypeRaw = currentline[raceTypeIdx]?.trim().toUpperCase();
+          workout.raceType = ['A', 'B', 'C'].includes(raceTypeRaw) ? raceTypeRaw : '';
+
+          workout.details = currentline[detailsIdx]?.trim();
+          workout.focus = currentline[focusIdx]?.trim();
+          workout.activityType = getActivityType({ plannedActivity: workout.plannedActivity, details: workout.details });
+
+          const durationFromColumn = parseNumericCell(currentline[plannedDurationIdx]);
+          const distanceFromColumn = parseNumericCell(currentline[plannedDistanceIdx]);
+
+          // Fall back to details when explicit duration column is missing.
+          const durationMatch = workout.details?.match(/(\d+)\s*m/);
+          workout.plannedDuration = durationFromColumn ?? (durationMatch ? parseInt(durationMatch[1], 10) : 60);
+
+          // Fall back to details when explicit distance column is missing.
+          const distanceMatch = workout.details?.match(/(\d+(?:\.\d+)?)\s*km/);
+          workout.plannedDistance = distanceFromColumn ?? (distanceMatch ? parseFloat(distanceMatch[1]) : null);
+
+          if (workout.date && workout.plannedActivity) {
+            workouts.push(workout);
+          } else {
+            skippedRows++;
+          }
+        }
+
+        if (workouts.length === 0) {
+          alert('No valid rows found to import. Please check Date and Activity columns.');
+          return;
+        }
+
         setLoading(true);
         try {
           await importPlannedWorkouts(athleteId, workouts);
@@ -484,11 +578,19 @@ const Planner = ({ initialDate = new Date() }) => {
             new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0)
           );
           setPlannerItems(items);
+
+          if (skippedRows > 0) {
+            alert(`Imported ${workouts.length} rows. Skipped ${skippedRows} invalid row(s).`);
+          }
         } catch (error) {
           console.error('Import failed:', error);
+          alert('Import failed. Please check the CSV format and try again.');
         } finally {
           setLoading(false);
         }
+      } catch (error) {
+        console.error('Failed to parse CSV:', error);
+        alert('Could not parse CSV file. Please verify it is a valid CSV.');
       }
     };
     reader.readAsText(file);
@@ -620,7 +722,7 @@ const Planner = ({ initialDate = new Date() }) => {
                                       <Box style={{ opacity: 0.9, display: 'flex' }}>
                                         <IconMoon size={14} color="white" />
                                       </Box>
-                                      <Text size="11px" fw={900} c="white" ls="0.5px" truncate="end" style={{ flex: 1 }}>
+                                      <Text size="xs" fw={900} c="white" ls="0.5px" lh={1.2} truncate="end" style={{ flex: 1 }}>
                                         Rest Day
                                       </Text>
                                     </Group>
@@ -644,14 +746,14 @@ const Planner = ({ initialDate = new Date() }) => {
                                     px={10}
                                     py={8}
                                     radius="md"
-                                    bg={item.isActual ? 'rgba(252, 76, 2, 0.15)' : (isDone ? 'green.8' : (isRaceA ? 'maroon' : config.color))}
+                                    bg={item.isActual ? 'rgba(252, 76, 2, 0.15)' : (isDone ? 'dark.6' : config.color)}
                                     style={{
-                                      backgroundImage: item.isActual ? 'linear-gradient(45deg, rgba(252, 76, 2, 0.2) 0%, rgba(252, 76, 2, 0) 100%)' : (isDone ? 'none' : config.gradient),
-                                      borderColor: item.isActual ? '#FC4C02' : (isRaceA ? 'var(--mantine-color-yellow-4)' : 'rgba(255,255,255,0.1)'),
+                                      borderColor: item.isActual ? '#FC4C02' : (isRaceA ? 'var(--mantine-color-yellow-6)' : (isDone ? 'var(--mantine-color-green-8)' : 'rgba(255,255,255,0.1)')),
                                       borderWidth: (isRaceA || item.isActual) ? '2px' : '1px',
-                                      boxShadow: isRaceA ? '0 0 15px rgba(255,215,0,0.5), inset 0 0 5px rgba(255,255,255,0.2)' : '0 4px 6px rgba(0,0,0,0.1)',
+                                      boxShadow: isRaceA ? '0 0 10px rgba(255,215,0,0.2)' : '0 4px 6px rgba(0,0,0,0.1)',
                                       cursor: item.isActual ? 'default' : 'grab',
                                       transition: 'transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                                      opacity: isDone ? 0.7 : 1,
                                     }}
                                     onMouseEnter={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1.02) translateY(-2px)')}
                                     onMouseLeave={(e) => !item.isActual && (e.currentTarget.style.transform = 'scale(1) translateY(0)')}
@@ -666,17 +768,28 @@ const Planner = ({ initialDate = new Date() }) => {
                                       <Group justify="space-between" align="center" wrap="nowrap" mb={2}>
                                         <Group gap={6} wrap="nowrap" style={{ flex: 1, overflow: 'hidden' }}>
                                           <Box style={{ opacity: 0.9, display: 'flex' }}>
-                                            {item.isActual ? <IconBrandStrava size={14} color="#FC4C02" /> : config.icon}
+                                            {item.isActual ? <IconBrandStrava size={14} color="#FC4C02" /> : (isDone ? <IconCheck size={14} color="var(--mantine-color-green-4)" /> : config.icon)}
                                           </Box>
-                                          <Text size="11px" fw={900} c="white" ls="0.5px" truncate="end" style={{ flex: 1 }}>
+                                          <Text size="xs" fw={900} c={isDone ? 'dimmed' : 'white'} ls="0.5px" lh={1.2} truncate="end" style={{ flex: 1, textDecoration: isDone ? 'line-through' : 'none' }}>
                                             {isRaceA && '🏆 '}{item.plannedActivity}
                                           </Text>
                                         </Group>
                                         {!item.isActual && <IconArrowsMove size={10} color="white" style={{ opacity: 0.5, flexShrink: 0 }} />}
                                       </Group>
-                                      <Text size="10px" c="white" opacity={0.8} truncate="end" fw={500}>
-                                        {item.details}
-                                      </Text>
+                                      {(item.plannedDistance || item.plannedDuration) && (
+                                        <Group gap={4} mt={4}>
+                                          {item.plannedDistance && (
+                                            <Badge size="xs" variant="light" color={item.isActual ? "orange" : "gray"} style={{ textTransform: 'none' }}>
+                                              {item.plannedDistance} Km
+                                            </Badge>
+                                          )}
+                                          {item.plannedDuration && (
+                                            <Badge size="xs" variant="light" color={item.isActual ? "orange" : "gray"} style={{ textTransform: 'none' }}>
+                                              {item.plannedDuration} min
+                                            </Badge>
+                                          )}
+                                        </Group>
+                                      )}
                                     </Stack>
                                   </Paper>
                                 );
@@ -708,11 +821,11 @@ const Planner = ({ initialDate = new Date() }) => {
                           <Text size="10px" fw={900} c="orange">{Math.round(totals.actualMinutes / 60)}h</Text>
                         </Group>
                         <Group justify="center" gap={4}>
-                          <Text size="10px" fw={600} c="dimmed">TSS:</Text>
+                          <Text size="10px" fw={600} c="dimmed">LOAD:</Text>
                           <Text size="10px" fw={900}>{totals.plannedTSS}</Text>
                         </Group>
                         <Group justify="center" gap={4}>
-                          <Text size="10px" fw={600} c="orange">ACTUAL TSS:</Text>
+                          <Text size="10px" fw={600} c="orange">ACTUAL LOAD:</Text>
                           <Text size="10px" fw={900} c="orange">{totals.actualTSS}</Text>
                         </Group>
                       </Stack>
@@ -822,8 +935,22 @@ const Planner = ({ initialDate = new Date() }) => {
                   <Group justify="space-between">
                     <Stack gap={4}>
                       <Text size="xs"><b>Planned:</b> {item.plannedDuration} min</Text>
-                      {item.details && <Text size="sm" fw={500}>{item.details}</Text>}
-                      {item.focus && <Badge size="xs" variant="outline">{item.focus}</Badge>}
+                      {item.details && (
+                        <Paper p="xs" radius="sm" bg="rgba(255,255,255,0.03)" withBorder>
+                          <Text size="xs" c="dimmed" fw={700} mb={4}>Details</Text>
+                          <Text size="sm" fw={500} style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>
+                            {item.details}
+                          </Text>
+                        </Paper>
+                      )}
+                      {item.focus && (
+                        <Paper p="xs" radius="sm" bg="rgba(255,255,255,0.03)" withBorder>
+                          <Text size="xs" c="dimmed" fw={700} mb={4}>Focus</Text>
+                          <Text size="sm" style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>
+                            {item.focus}
+                          </Text>
+                        </Paper>
+                      )}
                     </Stack>
                     {!item.isActual && (
                       <Button
@@ -926,7 +1053,7 @@ const Planner = ({ initialDate = new Date() }) => {
               decimalScale={2}
             />
             <NumberInput
-              label="Planned TSS"
+              label="Planned Load"
               placeholder="Load estimate"
               value={newWorkout.plannedTss}
               onChange={(val) => setNewWorkout({ ...newWorkout, plannedTss: val })}
@@ -948,17 +1075,21 @@ const Planner = ({ initialDate = new Date() }) => {
             onChange={(val) => setNewWorkout({ ...newWorkout, raceType: val })}
             clearable
           />
-          <TextInput
+          <Textarea
             label="Focus"
             placeholder="e.g. Endurance Base"
             value={newWorkout.focus}
             onChange={(e) => setNewWorkout({ ...newWorkout, focus: e.target.value })}
+            minRows={3}
+            autosize
           />
-          <TextInput
+          <Textarea
             label="Details"
             placeholder="e.g. 10km Easy (9:00 pace)"
             value={newWorkout.details}
             onChange={(e) => setNewWorkout({ ...newWorkout, details: e.target.value })}
+            minRows={3}
+            autosize
           />
           <Group justify="flex-end" mt="md">
             <Button variant="subtle" color="gray" onClick={() => setShowAddForm(false)}>Cancel</Button>

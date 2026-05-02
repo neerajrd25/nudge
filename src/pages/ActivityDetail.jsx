@@ -182,7 +182,7 @@ export default function ActivityDetail() {
                 <Text c="dimmed" fw={700}>{activityDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text>
               </Stack>
               <Badge size="xl" variant="filled" color="blue" radius="md">
-                TSS: {displayTSS || 'N/A'}
+                Load: {displayTSS || 'N/A'}
               </Badge>
             </Group>
 
