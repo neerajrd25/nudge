@@ -168,6 +168,9 @@ nudge/
 ├── .env.example        # Environment variables template
 └── package.json        # Dependencies and scripts
 ```
+## Project Components & Architecture
+[![Architecture diagram of neerajrd25/nudge](https://gitdiagram.com/neerajrd25/nudge/diagram.png)](https://gitdiagram.com/neerajrd25/nudge?utm_source=readme&utm_medium=picture)
+
 
 ## Security Notes
 
